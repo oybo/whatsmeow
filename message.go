@@ -645,6 +645,10 @@ func padMessage(plaintext []byte) []byte {
 func (cli *Client) handleSenderKeyDistributionMessage(ctx context.Context, chat, from types.JID, axolotlSKDM []byte) {
 	builder := groups.NewGroupSessionBuilder(cli.Store, pbSerializer)
 	senderKeyName := protocol.NewSenderKeyName(chat.String(), from.SignalAddress())
+	if axolotlSKDM == nil || len(axolotlSKDM) == 0 {
+		cli.Log.Errorf("Failed to parse sender key distribution message, axolotlSKDM is empty")
+		return
+	}
 	sdkMsg, err := protocol.NewSenderKeyDistributionMessageFromBytes(axolotlSKDM, pbSerializer.SenderKeyDistributionMessage)
 	if err != nil {
 		cli.Log.Errorf("Failed to parse sender key distribution message from %s for %s: %v", from, chat, err)

@@ -1131,6 +1131,31 @@ func (cli *Client) getMessageContent(
 			}},
 		})
 	}
+	// 对于 ViewOnceMessage 这种类型 message，必须加上这段东西才正常
+	// <biz>
+	//     <interactive  type='native_flow' v='1'>
+	//         <native_flow  name='mixed' v='2'/>
+	//     </interactive>
+	// </biz>
+	if message.ViewOnceMessage != nil {
+		content = append(content, waBinary.Node{
+			Tag: "biz",
+			Content: []waBinary.Node{{
+				Tag: "interactive",
+				Attrs: waBinary.Attrs{
+					"type": "native_flow",
+					"v":    "1",
+				},
+				Content: []waBinary.Node{{
+					Tag: "native_flow",
+					Attrs: waBinary.Attrs{
+						"name": "mixed",
+						"v":    "2",
+					},
+				}},
+			}},
+		})
+	}
 	return content
 }
 
