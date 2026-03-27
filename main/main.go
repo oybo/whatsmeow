@@ -370,7 +370,7 @@ func sendMessageHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 发送消息
 	fmt.Println("7、发送消息" + req.JID)
-	resp, err := client.SendMessage(context.Background(), jid, msg)
+	resp, err := client.SendMessage(context.Background(), true, jid, msg)
 	if err != nil {
 		http.Error(w, "failed to send message: "+err.Error(), 500)
 		return
