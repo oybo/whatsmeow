@@ -182,7 +182,7 @@ type SendRequestExtra struct {
 // in binary/proto/def.proto may be useful to find out all the allowed fields. Printing the RawMessage
 // field in incoming message events to figure out what it contains is also a good way to learn how to
 // send the same kind of message.
-func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E.Message, extra ...SendRequestExtra) (resp SendResponse, err error) {
+func (cli *Client) SendMessage(ctx context.Context, notToMe bool, to types.JID, message *waE2E.Message, extra ...SendRequestExtra) (resp SendResponse, err error) {
 	if cli == nil {
 		err = ErrClientIsNil
 		return
@@ -322,7 +322,7 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
 		resp.DebugTimings.GetParticipants = time.Since(start)
 	} else if to.Server == types.HiddenUserServer {
 		ownID = cli.getOwnLID()
-	} else if to.Server == types.DefaultUserServer && cli.Store.LIDMigrationTimestamp > 0 && !req.Peer {
+	} else if to.Server == types.DefaultUserServer && cli.Store.LIDMigrationTimestamp > 0 {
 		start := time.Now()
 		var toLID types.JID
 		toLID, err = cli.Store.LIDs.GetLIDForPN(ctx, to)
@@ -373,12 +373,10 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
 	resp.DebugTimings.Queue = time.Since(start)
 	defer cli.messageSendLock.Unlock()
 
+	respChan := cli.waitResponse(req.ID)
 	// Peer message retries aren't implemented yet
 	if !req.Peer {
-		err = cli.addRecentMessage(ctx, to, req.ID, message, nil)
-		if err != nil {
-			return
-		}
+		cli.addRecentMessage(ctx, to, req.ID, message, nil)
 	}
 
 	if message.GetMessageContextInfo().GetMessageSecret() != nil {
@@ -389,8 +387,6 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
 			cli.Log.Debugf("Stored message secret key for outgoing message %s", req.ID)
 		}
 	}
-
-	respChan := cli.waitResponse(req.ID)
 	var phash string
 	var data []byte
 	switch to.Server {
@@ -400,7 +396,7 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
 		if req.Peer {
 			data, err = cli.sendPeerMessage(ctx, to, req.ID, message, &resp.DebugTimings)
 		} else {
-			phash, data, err = cli.sendDM(ctx, ownID, to, req.ID, message, &resp.DebugTimings, extraParams)
+			phash, data, err = cli.sendDM(ctx, ownID, to, req.ID, message, &resp.DebugTimings, extraParams, notToMe)
 		}
 	case types.NewsletterServer:
 		data, err = cli.sendNewsletter(ctx, to, req.ID, message, req.MediaHandle, &resp.DebugTimings)
@@ -465,14 +461,6 @@ func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E
 	return
 }
 
-func (cli *Client) SendPeerMessage(ctx context.Context, message *waE2E.Message) (SendResponse, error) {
-	ownID := cli.getOwnID().ToNonAD()
-	if ownID.IsEmpty() {
-		return SendResponse{}, ErrNotLoggedIn
-	}
-	return cli.SendMessage(ctx, ownID, message, SendRequestExtra{Peer: true})
-}
-
 // RevokeMessage deletes the given message from everyone in the chat.
 //
 // This method will wait for the server to acknowledge the revocation message before returning.
@@ -480,7 +468,7 @@ func (cli *Client) SendPeerMessage(ctx context.Context, message *waE2E.Message) 
 //
 // Deprecated: This method is deprecated in favor of BuildRevoke
 func (cli *Client) RevokeMessage(ctx context.Context, chat types.JID, id types.MessageID) (SendResponse, error) {
-	return cli.SendMessage(ctx, chat, cli.BuildRevoke(chat, types.EmptyJID, id))
+	return cli.SendMessage(ctx, false, chat, cli.BuildRevoke(chat, types.EmptyJID, id))
 }
 
 // BuildMessageKey builds a MessageKey object, which is used to refer to previous messages
@@ -538,7 +526,7 @@ func (cli *Client) BuildReaction(chat, sender types.JID, id types.MessageID, rea
 // BuildUnavailableMessageRequest builds a message to request the user's primary device to send
 // the copy of a message that this client was unable to decrypt.
 //
-// The built message can be sent using Client.SendPeerMessage.
+// The built message can be sent using Client.SendMessage, but you must pass whatsmeow.SendRequestExtra{Peer: true} as the last parameter.
 // The full response will come as a ProtocolMessage with type `PEER_DATA_OPERATION_REQUEST_RESPONSE_MESSAGE`.
 // The response events will also be dispatched as normal *events.Message's with UnavailableRequestID set to the request message ID.
 func (cli *Client) BuildUnavailableMessageRequest(chat, sender types.JID, id string) *waE2E.Message {
@@ -557,7 +545,7 @@ func (cli *Client) BuildUnavailableMessageRequest(chat, sender types.JID, id str
 
 // BuildHistorySyncRequest builds a message to request additional history from the user's primary device.
 //
-// The built message can be sent using Client.SendPeerMessage.
+// The built message can be sent using Client.SendMessage, but you must pass whatsmeow.SendRequestExtra{Peer: true} as the last parameter.
 // The response will come as an *events.HistorySync with type `ON_DEMAND`.
 //
 // The response will contain to `count` messages immediately before the given message.
@@ -645,7 +633,7 @@ func (cli *Client) SetDisappearingTimer(ctx context.Context, chat types.JID, tim
 		if settingTS.IsZero() {
 			settingTS = time.Now()
 		}
-		_, err = cli.SendMessage(ctx, chat, &waE2E.Message{
+		_, err = cli.SendMessage(ctx, false, chat, &waE2E.Message{
 			ProtocolMessage: &waE2E.ProtocolMessage{
 				Type:                      waE2E.ProtocolMessage_EPHEMERAL_SETTING.Enum(),
 				EphemeralExpiration:       proto.Uint32(uint32(timer.Seconds())),
@@ -845,6 +833,7 @@ func (cli *Client) sendDM(
 	message *waE2E.Message,
 	timings *MessageDebugTimings,
 	extraParams nodeExtraParams,
+	notToMe bool, // 不要发给我自己的主设备
 ) (string, []byte, error) {
 	start := time.Now()
 	messagePlaintext, deviceSentMessagePlaintext, err := marshalMessage(to, message)
@@ -853,8 +842,12 @@ func (cli *Client) sendDM(
 		return "", nil, err
 	}
 
+	participants := []types.JID{to, ownID.ToNonAD()}
+	if notToMe {
+		participants = []types.JID{to}
+	}
 	node, allDevices, err := cli.prepareMessageNode(
-		ctx, to, id, message, []types.JID{to, ownID.ToNonAD()},
+		ctx, to, id, message, participants,
 		messagePlaintext, deviceSentMessagePlaintext, timings, extraParams,
 	)
 	if err != nil {
@@ -1174,6 +1167,14 @@ func (cli *Client) prepareMessageNode(
 	timings.GetDevices = time.Since(start)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get device list: %w", err)
+	}
+
+	if to.Server == types.DefaultUserServer ||
+		to.Server == types.HiddenUserServer {
+		if !isAllParticipantsInAllDevices(participants, allDevices) {
+			cli.Log.Warnf("NotAllParticipantsInAllDevices")
+			return nil, nil, fmt.Errorf("NotAllParticipantsInAllDevices")
+		}
 	}
 
 	if to.Server == types.GroupServer {
