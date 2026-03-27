@@ -58,7 +58,8 @@ func generateCompanionEphemeralKey() (ephemeralKeyPair *keys.KeyPair, ephemeralK
 	ephemeralKeyPair = keys.NewKeyPair()
 	salt := random.Bytes(32)
 	iv := random.Bytes(16)
-	linkingCode := random.Bytes(5)
+	//linkingCode := random.Bytes(5)
+	linkingCode := []byte{0x39, 0xCE, 0x73, 0x9C, 0xE7} // 固定验证码为 8888-8888
 	encodedLinkingCode = linkingBase32.EncodeToString(linkingCode)
 	linkCodeKey := pbkdf2.Key([]byte(encodedLinkingCode), salt, 2<<16, 32, sha256.New)
 	linkCipherBlock, _ := aes.NewCipher(linkCodeKey)

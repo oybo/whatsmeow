@@ -1021,3 +1021,43 @@ func (cli *Client) sendUnifiedSession() {
 		cli.Log.Debugf("Failed to send unified_session telemetry: %v", err)
 	}
 }
+
+//----- add
+
+/*
+设置信任用户
+<iq to="s.whatsapp.net" type="set" xmlns="privacy" id="29294.52599-149">
+
+	<tokens>
+	   <token jid="639757430046@s.whatsapp.net" t="1761622030" type="trusted_contact" />
+	</tokens>
+
+</iq>
+*/
+func (cli *Client) SetTrustedContact(ctx context.Context, jid string) error {
+	if cli == nil {
+		return ErrClientIsNil
+	}
+	timeStamp := time.Now().Unix()
+
+	_, err := cli.sendIQ(ctx, infoQuery{
+		Namespace: "privacy",
+		Type:      "set",
+		To:        types.ServerJID,
+		Content: []waBinary.Node{{
+			Tag: "tokens",
+			Content: []waBinary.Node{{
+				Tag: "token",
+				Attrs: waBinary.Attrs{
+					"jid":  jid,
+					"t":    timeStamp,
+					"type": "trusted_contact",
+				},
+			}},
+		}},
+	})
+	if err != nil {
+		return fmt.Errorf("error SetTrustedContact: %w", err)
+	}
+	return nil
+}
