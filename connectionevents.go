@@ -37,6 +37,14 @@ func (cli *Client) handleStreamError(ctx context.Context, node *waBinary.Node) {
 				cli.Log.Errorf("Failed to reconnect after 515 code: %v", err)
 			}
 		}()
+	case code == "516":
+		cli.expectDisconnect()
+		cli.Log.Infof("Got 516 code, sending LoggedOut event and deleting session")
+		go cli.dispatchEvent(&events.LoggedOut{OnConnect: false, Reason: events.ConnectFailureLoginFailed516})
+		err := cli.Store.Delete(ctx)
+		if err != nil {
+			cli.Log.Warnf("Failed to delete store after 516 error: %v", err)
+		}
 	case code == "401" && conflictType == "device_removed":
 		cli.expectDisconnect()
 		cli.Log.Infof("Got device removed stream error, sending LoggedOut event and deleting session")

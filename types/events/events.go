@@ -183,6 +183,7 @@ const (
 	ConnectFailureInternalServerError ConnectFailureReason = 500
 	ConnectFailureExperimental        ConnectFailureReason = 501
 	ConnectFailureServiceUnavailable  ConnectFailureReason = 503
+	ConnectFailureLoginFailed516      ConnectFailureReason = 516
 )
 
 var connectFailureReasonMessage = map[ConnectFailureReason]string{
