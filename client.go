@@ -815,6 +815,24 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 	} else if cli.receiveResponse(ctx, node) {
 		// handled
 	} else if _, ok := cli.nodeHandlers[node.Tag]; ok {
+		// 被动心跳（服务器端心跳）
+		// service -> client
+		//	 <iq from="s.whatsapp.net" type="get" t="1763967643" xmlns="urn:xmpp:ping" />
+		// client -> service
+		//	 <iq type="result" to="s.whatsapp.net" />
+		if node.Tag == "iq" && node.Attrs["xmlns"] == "urn:xmpp:ping" {
+			// 回一个心跳包回去
+			// <iq type="result" to="s.whatsapp.net" />
+			cli.Log.Debugf("Received server ping frame")
+			_, _, err := cli.sendIQXmppPing(&infoQuery{
+				Type: "result",
+				To:   types.ServerJID,
+			})
+			if err != nil {
+				cli.Log.Warnf("Failed to send ping frame: %v", err)
+			}
+			return // 主动跳出
+		}
 		select {
 		case cli.handlerQueue <- node:
 		case <-ctx.Done():
