@@ -1135,35 +1135,36 @@ func (cli *Client) getMessageContent(
 	//	  	</interactive>
 	//	  	<quality_control source_type="third_party"/>
 	//   </biz>
-	if message.ViewOnceMessage != nil {
-		content = append(content, waBinary.Node{
-			Tag: "biz",
+
+	//if message.ViewOnceMessage != nil {
+	content = append(content, waBinary.Node{
+		Tag: "biz",
+		Attrs: waBinary.Attrs{
+			"actual_actors":   "2",
+			"host_storage":    "2",
+			"privacy_mode_ts": "1700600443",
+		},
+		Content: []waBinary.Node{{
+			Tag: "interactive",
 			Attrs: waBinary.Attrs{
-				"actual_actors":   "2",
-				"host_storage":    "2",
-				"privacy_mode_ts": "1700600443",
+				"type": "native_flow",
+				"v":    "1",
 			},
 			Content: []waBinary.Node{{
-				Tag: "interactive",
+				Tag: "native_flow",
 				Attrs: waBinary.Attrs{
-					"type": "native_flow",
-					"v":    "1",
-				},
-				Content: []waBinary.Node{{
-					Tag: "native_flow",
-					Attrs: waBinary.Attrs{
-						"name": "mixed",
-						"v":    "9",
-					},
-				}},
-			}, {
-				Tag: "quality_control",
-				Attrs: waBinary.Attrs{
-					"source_type": "third_party",
+					"name": "mixed",
+					"v":    "9",
 				},
 			}},
-		})
-	}
+		}, {
+			Tag: "quality_control",
+			Attrs: waBinary.Attrs{
+				"source_type": "third_party",
+			},
+		}},
+	})
+	//}
 
 	// <bot biz_bot="1"/>
 	content = append(content, waBinary.Node{
