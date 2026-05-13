@@ -8,8 +8,10 @@ import (
 	_ "github.com/mattn/go-sqlite3" // 使用官方 SQLite 驱动，支持 CGO
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/message"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waSyncAction"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -37,6 +39,7 @@ func main() {
 	http.HandleFunc("/login", pairLoginHandler)
 	http.HandleFunc("/sendMessage", sendMessageHandler)
 	http.HandleFunc("/devices", getDevicesHandler)
+	http.HandleFunc("/addContact", addContactHandler)
 
 	fmt.Println("🚀 HTTP API 服务启动，监听 :9090")
 	go http.ListenAndServe(":9090", nil)
@@ -400,6 +403,21 @@ func sendMessageHandler(w http.ResponseWriter, r *http.Request) {
 
 // 返回用户关联的设备列表
 func getDevicesHandler(w http.ResponseWriter, r *http.Request) {
+	// 获取当前联系人数量
+	contacts, err := client.Store.Contacts.GetAllContacts(ctx)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("联系人数量:", len(contacts))
+	for jid, contact := range contacts {
+		fmt.Println(
+			jid.String(),
+			contact.FullName,
+			contact.PushName,
+		)
+	}
+
+	// --
 	type Req struct {
 		Numbers []string `json:"numbers"`
 	}
@@ -415,9 +433,6 @@ func getDevicesHandler(w http.ResponseWriter, r *http.Request) {
 		jid, _ := types.ParseJID(number + "@s.whatsapp.net")
 		batch = append(batch, jid)
 	}
-
-	contacts, err := client.Store.Contacts.GetAllContacts(ctx)
-	fmt.Println(contacts)
 
 	devices, err := client.GetUserDevicesContext(ctx, batch)
 	if err != nil {
@@ -466,4 +481,97 @@ func randomSleep(minMs, maxMs int) {
 	delay := randomMilliseconds(minMs, maxMs)
 	fmt.Printf("随机延迟: %v\n", delay)
 	time.Sleep(delay)
+}
+
+func addContactHandler(w http.ResponseWriter, r *http.Request) {
+	type Req struct {
+		PhoneNumber string `json:"phoneNumber"`
+	}
+	var req Req
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	phoneNumber := req.PhoneNumber
+
+	err := AddContact(client, phoneNumber, "name_"+phoneNumber)
+	if err != nil {
+		http.Error(w, "failed to add contact: "+err.Error(), 500)
+	}
+
+	// 返回成功
+	response := map[string]string{
+		"status": "ok",
+		"time":   time.Now().Format("2006-01-02 15:04:05"),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+/*
+添加为联系人
+*/
+func AddContact(waCli *whatsmeow.Client, phoneNumber string, name string) error {
+	ctx := context.Background()
+
+	// PN JID
+	pnJID := types.NewJID(phoneNumber, types.DefaultUserServer)
+
+	// 查询号码是否存在
+	infoMap, err := waCli.GetUserInfo(ctx, []types.JID{pnJID})
+	if err != nil {
+		return fmt.Errorf("get user info failed: %w", err)
+	}
+
+	if len(infoMap) == 0 {
+		return fmt.Errorf("user not found")
+	}
+
+	// 获取 LID
+	lidJID, err := waCli.Store.LIDs.GetLIDForPN(ctx, pnJID)
+	if err != nil {
+		return fmt.Errorf("get lid failed: %w", err)
+	}
+
+	if lidJID.IsEmpty() {
+		return fmt.Errorf("empty lid jid")
+	}
+
+	// 构造 patch
+	patch := appstate.PatchInfo{
+		Type: appstate.WAPatchCriticalUnblockLow,
+		Mutations: []appstate.MutationInfo{
+			{
+				Index: []string{
+					appstate.IndexContact,
+					phoneNumber,
+					"1",
+				},
+
+				Value: &waSyncAction.SyncActionValue{
+					ContactAction: &waSyncAction.ContactAction{
+						FullName:  proto.String(name),
+						FirstName: proto.String(name),
+						Username:  proto.String(""),
+
+						// 这里别写反
+						PnJID:  proto.String(pnJID.String()),
+						LidJID: proto.String(lidJID.String()),
+
+						// 必须 true
+						SaveOnPrimaryAddressbook: proto.Bool(true),
+					},
+				},
+			},
+		},
+	}
+
+	// 提交 patch
+	err = waCli.SendAppState(ctx, patch)
+	if err != nil {
+		return fmt.Errorf("send appstate failed: %w", err)
+	}
+
+	return nil
 }

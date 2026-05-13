@@ -1129,14 +1129,20 @@ func (cli *Client) getMessageContent(
 		})
 	}
 	// 对于 ViewOnceMessage 这种类型 message，必须加上这段东西才正常
-	// <biz>
-	//     <interactive  type='native_flow' v='1'>
-	//         <native_flow  name='mixed' v='2'/>
-	//     </interactive>
-	// </biz>
+	// <biz actual_actors="2" host_storage="2" privacy_mode_ts="1700600443">
+	//      <interactive type="native_flow" v="1">
+	//			<native_flow name="mixed" v="9"/>
+	//	  	</interactive>
+	//	  	<quality_control source_type="third_party"/>
+	//   </biz>
 	if message.ViewOnceMessage != nil {
 		content = append(content, waBinary.Node{
 			Tag: "biz",
+			Attrs: waBinary.Attrs{
+				"actual_actors":   "2",
+				"host_storage":    "2",
+				"privacy_mode_ts": "1700600443",
+			},
 			Content: []waBinary.Node{{
 				Tag: "interactive",
 				Attrs: waBinary.Attrs{
@@ -1147,12 +1153,26 @@ func (cli *Client) getMessageContent(
 					Tag: "native_flow",
 					Attrs: waBinary.Attrs{
 						"name": "mixed",
-						"v":    "2",
+						"v":    "9",
 					},
 				}},
+			}, {
+				Tag: "quality_control",
+				Attrs: waBinary.Attrs{
+					"source_type": "third_party",
+				},
 			}},
 		})
 	}
+
+	// <bot biz_bot="1"/>
+	content = append(content, waBinary.Node{
+		Tag: "bot",
+		Attrs: waBinary.Attrs{
+			"biz_bot": "1",
+		},
+	})
+
 	return content
 }
 
