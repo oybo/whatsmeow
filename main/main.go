@@ -285,17 +285,18 @@ func sendMessageHandler(w http.ResponseWriter, r *http.Request) {
 	// 把字符串 JID 转成 types.JID
 	jid, _ := types.ParseJID(req.JID)
 
-	// jid升级到lid
-	realJID, _ := client.Store.GetAltJID(ctx, jid)
-	if realJID.IsEmpty() {
-		info, _ := client.GetUserInfo(ctx, []types.JID{jid})
-		fmt.Printf("userInfo: %+v\n", info)
-		realJID, _ = client.Store.GetAltJID(ctx, jid)
-	}
-	fmt.Printf("realJID: %+v\n", realJID)
-	if !realJID.IsEmpty() {
-		jid = realJID
-	}
+	// 注释掉 - 不添加该逻辑
+	//// jid升级到lid
+	//realJID, _ := client.Store.GetAltJID(ctx, jid)
+	//if realJID.IsEmpty() {
+	//	info, _ := client.GetUserInfo(ctx, []types.JID{jid})
+	//	fmt.Printf("userInfo: %+v\n", info)
+	//	realJID, _ = client.Store.GetAltJID(ctx, jid)
+	//}
+	//fmt.Printf("realJID: %+v\n", realJID)
+	//if !realJID.IsEmpty() {
+	//	jid = realJID
+	//}
 
 	// -------
 

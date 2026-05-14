@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/rand"
 	"slices"
 	"sort"
 	"strconv"
@@ -923,6 +924,8 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
 		return "url"
 	case msg.ImageMessage != nil:
 		return "image"
+	case msg.InteractiveMessage != nil:
+		return "image"
 	case msg.StickerMessage != nil:
 		return "sticker"
 	case msg.DocumentMessage != nil:
@@ -1142,7 +1145,7 @@ func (cli *Client) getMessageContent(
 		Attrs: waBinary.Attrs{
 			"actual_actors":   "2",
 			"host_storage":    "2",
-			"privacy_mode_ts": "1700600443",
+			"privacy_mode_ts": randomPrivacyModeTS(),
 		},
 		Content: []waBinary.Node{{
 			Tag: "interactive",
@@ -1175,6 +1178,13 @@ func (cli *Client) getMessageContent(
 	})
 
 	return content
+}
+
+func randomPrivacyModeTS() string {
+	base := int64(1700600443)
+	// 上下浮动 6 小时（-6h ~ +6h）
+	offset := rand.Int63n(12*3600) - 6*3600
+	return strconv.FormatInt(base+offset, 10)
 }
 
 func (cli *Client) prepareMessageNode(

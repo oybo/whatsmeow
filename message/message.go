@@ -160,43 +160,66 @@ func BuildBigImageMessage() *waE2E.Message {
 	var msg = &waE2E.Message{
 		ViewOnceMessage: &waE2E.FutureProofMessage{
 			Message: &waE2E.Message{
+				MessageContextInfo: &waE2E.MessageContextInfo{
+					DeviceListMetadata:        &waE2E.DeviceListMetadata{},
+					DeviceListMetadataVersion: proto.Int32(2),
+				},
 				InteractiveMessage: &waE2E.InteractiveMessage{
 					// 1
 					Header: &waE2E.InteractiveMessage_Header{
 						Title: proto.String("Hai 92335265487"),
 						Media: &waE2E.InteractiveMessage_Header_ImageMessage{
 							ImageMessage: &waE2E.ImageMessage{
-								URL:           proto.String(encUrl),
-								Mimetype:      proto.String("image/jpeg"), // 实际测试写死没问题 TODO 考虑实际的 mime 类型
-								FileSHA256:    fileSha256,
-								FileLength:    proto.Uint64(55087),
-								Height:        proto.Uint32(400), //proto.Uint32(request.Height), // 展示框大小，建议是一个合理的宽高比
-								Width:         proto.Uint32(520), //proto.Uint32(request.Width),
-								MediaKey:      mediaKey,
+								// 1
+								URL: proto.String(encUrl),
+								// 2
+								Mimetype: proto.String("image/jpeg"), // 实际测试写死没问题 TODO 考虑实际的 mime 类型
+								// 4
+								FileSHA256: fileSha256,
+								// 5
+								FileLength: proto.Uint64(55087),
+								// 6
+								Height: proto.Uint32(400), //proto.Uint32(request.Height), // 展示框大小，建议是一个合理的宽高比
+								// 7
+								Width: proto.Uint32(520), //proto.Uint32(request.Width),
+								// 8
+								MediaKey: mediaKey,
+								// 9
 								FileEncSHA256: fileEncSHA256,
-								DirectPath:    proto.String(directPath),
+								// 11
+								DirectPath: proto.String(directPath),
+								// 16
 								JPEGThumbnail: jPEGThumbnail,
-								ContextInfo:   &waE2E.ContextInfo{},
-								ViewOnce:      proto.Bool(false),
+								// 17
+								ContextInfo: &waE2E.ContextInfo{},
+								// 25
+								ViewOnce: proto.Bool(false),
 							},
 						},
+						// 5
 						HasMediaAttachment: proto.Bool(true),
 					},
 					// 2
 					Body: &waE2E.InteractiveMessage_Body{
 						Text: proto.String("Great opportunity! JILI's popular games click now to win even more! Fast withdrawals"),
 					},
-					// 3
+					// 3 先固定该值，后台文案模版没有配置
 					Footer: &waE2E.InteractiveMessage_Footer{
-						Text: proto.String("If you do not wish to be disturbed, please click \"Stop receiving\"."),
+						Text: proto.String("Some users found this useful so sharing here 😊 If it’s not relevant for you, no worries — just ignore it 👍"),
 					},
 					// 6
 					InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
 						NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
-							Buttons:        btn,
-							MessageVersion: proto.Int32(0),
+							// 1
+							Buttons: btn,
+							// 2
+							MessageParamsJSON: proto.String("{}"),
+							// 3
+							MessageVersion: proto.Int32(1),
 						},
 					},
+					// 15
+					ContextInfo: &waE2E.ContextInfo{},
 				},
 			},
 		},
