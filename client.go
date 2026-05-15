@@ -12,11 +12,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -833,6 +835,68 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 			}
 			return // 主动跳出
 		}
+
+		// 处理监听判断是否其他关联设备发送的消息
+		if node.Tag == "message" {
+			// 判断是否为自己的其他设备发送的消息   逻辑:
+			// 1. 属于接收的message
+			// 2. from里是自己的jid或者lid，并且 recipient的值不能为空且不能为自己的jid或lid
+			recipient, ok := node.Attrs["recipient"]
+			msg_id := node.Attrs["id"]
+			msg_from := node.Attrs["from"]
+			if ok && recipient != "" {
+				from := node.Attrs["from"]
+				// -- 子设备jid和lid中通常会带:数字，统一去掉:..转成主设备这种
+				msgFrom := fmt.Sprintf("%v", from)
+				msgRecipient := fmt.Sprintf("%v", recipient)
+				msgFromNumber := normalizeJid(msgFrom)
+				msgRecipientNumber := normalizeJid(msgRecipient)
+				myJidNumber := normalizeJid(cli.getOwnID().String())
+				myLidNumber := normalizeJid(cli.getOwnLID().String())
+				// from需要是我的jid或者lid，recipient不能为空且不能为自己的jid lid
+				isFromMeMsg := (msgFromNumber == myJidNumber || msgFromNumber == myLidNumber) && (msgRecipientNumber != myJidNumber && msgRecipientNumber != myLidNumber)
+				fmt.Printf("是否该账户下关联设备发送的消息：%v \n", isFromMeMsg)
+			}
+
+			jid, err := toJID(msg_from)
+
+			// 应该在收到消息的时候发送一个接收到的回执
+			// <receipt id="ACEFAAB0CDA7505946A0BBD806A876BC" to="30095439847465@lid" />
+			err = cli.sendNode(ctx, waBinary.Node{
+				Tag: "receipt",
+				Attrs: waBinary.Attrs{
+					"id": msg_id,
+					"to": jid,
+				},
+			})
+
+			// 2、发送订阅请求
+			// <presence type="subscribe" to="639757430046@s.whatsapp.net"><tctoken>0401173767940d8cc2be16</tctoken></presence>
+			if err != nil {
+				return
+			}
+			_ = cli.SubscribePresence(ctx, jid)
+
+			go func() {
+				// 延迟1 - 2 秒
+				randomSleep(100, 2000)
+
+				// 发送已阅读
+				//<receipt to="69080975409156@lid" type="read" id="ACB2E07F794D9C020A6970D892FEBEDC" t="1778819090297" sts="1778818703000509" />
+				err = cli.sendNode(ctx, waBinary.Node{
+					Tag: "receipt",
+					Attrs: waBinary.Attrs{
+						"to":   msg_from,
+						"type": "read",
+						"id":   msg_id,
+						"t":    time.Now().Unix(),
+					},
+				})
+
+			}()
+
+		}
+
 		select {
 		case cli.handlerQueue <- node:
 		case <-ctx.Done():
@@ -1078,4 +1142,48 @@ func (cli *Client) SetTrustedContact(ctx context.Context, jid string) error {
 		return fmt.Errorf("error SetTrustedContact: %w", err)
 	}
 	return nil
+}
+
+// 去掉 jid 的 :device 后缀，例如 "8618...20:18@s.whatsapp.net" → "8618...20:16@s.whatsapp.net"
+func normalizeJid(j string) string {
+	parts := strings.Split(j, "@")
+	if len(parts) != 2 {
+		return j
+	}
+	// 去掉 device
+	user := strings.Split(parts[0], ":")[0]
+	return user + "@" + parts[1]
+}
+
+func toJID(v any) (types.JID, error) {
+	switch x := v.(type) {
+	case string:
+		return types.ParseJID(x)
+	case []byte:
+		return types.ParseJID(string(x))
+	case fmt.Stringer:
+		return types.ParseJID(x.String())
+	case types.JID:
+		return x, nil
+	default:
+		return types.JID{}, fmt.Errorf("invalid jid type: %T", v)
+	}
+}
+
+// 生成指定范围内的随机延迟
+func randomMilliseconds(min, max int) time.Duration {
+	if min >= max {
+		return time.Duration(min) * time.Millisecond
+	}
+	// 使用当前时间作为随机种子
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	delay := r.Intn(max-min+1) + min
+	return time.Duration(delay) * time.Millisecond
+}
+
+// 随机延迟函数	随机延迟min - max 毫秒
+func randomSleep(minMs, maxMs int) {
+	delay := randomMilliseconds(minMs, maxMs)
+	fmt.Printf("随机延迟: %v\n", delay)
+	time.Sleep(delay)
 }
