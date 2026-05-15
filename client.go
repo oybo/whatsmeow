@@ -879,7 +879,7 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 
 			go func() {
 				// 延迟1 - 2 秒
-				randomSleep(100, 2000)
+				randomSleep(1000, 2000)
 
 				// 发送已阅读
 				//<receipt to="69080975409156@lid" type="read" id="ACB2E07F794D9C020A6970D892FEBEDC" t="1778819090297" sts="1778818703000509" />

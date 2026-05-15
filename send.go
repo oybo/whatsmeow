@@ -1174,7 +1174,6 @@ func (cli *Client) getMessageContent(
 		Tag: "bot",
 		Attrs: waBinary.Attrs{
 			"biz_bot": "1",
-			"edit":    "1",
 		},
 	})
 
