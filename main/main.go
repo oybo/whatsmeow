@@ -306,6 +306,14 @@ func sendMessageHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("1、发送自己在线状态" + req.JID)
 	// <presence type="available" name="Tank" />
 	_ = client.SendPresence(ctx, types.PresenceAvailable)
+	// 2-3分钟后离线
+	go func() {
+		// 随机等待 2~3 分钟
+		waitSeconds := 120 + rand.Intn(60)
+		time.Sleep(time.Duration(waitSeconds) * time.Second)
+		// 发送离线状态
+		_ = client.SendPresence(ctx, types.PresenceUnavailable)
+	}()
 
 	// 2、发送订阅请求
 	fmt.Println("2、发送订阅请求" + req.JID)

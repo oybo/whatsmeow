@@ -462,6 +462,70 @@ func (cli *Client) SendMessage(ctx context.Context, notToMe bool, to types.JID, 
 	return
 }
 
+/*
+预发送消息，只是获取对方session，但是不真实发送消息出去。
+*/
+func (cli *Client) PreSendMessage(ctx context.Context, to types.JID) (resp SendResponse, err error) {
+	ownID := cli.getOwnID()
+	var extraParams nodeExtraParams
+	message := &waE2E.Message{
+		Conversation: proto.String("hello"),
+	}
+
+	_, _, err = cli.preSendDM(ctx, ownID, to, "", message, &resp.DebugTimings, extraParams)
+
+	return SendResponse{}, err
+}
+
+func (cli *Client) preSendDM(
+	ctx context.Context,
+	ownID,
+	to types.JID,
+	id types.MessageID,
+	message *waE2E.Message,
+	timings *MessageDebugTimings,
+	extraParams nodeExtraParams,
+) (string, []byte, error) {
+	start := time.Now()
+
+	messagePlaintext, deviceSentMessagePlaintext, err := marshalMessage(to, message)
+	timings.Marshal = time.Since(start)
+	if err != nil {
+		return "", nil, err
+	}
+
+	node, allDevices, err := cli.prepareMessageNode(
+		ctx, to, id, message, []types.JID{to, ownID.ToNonAD()},
+		messagePlaintext, deviceSentMessagePlaintext, timings, extraParams,
+	)
+	if err != nil {
+		return "", nil, err
+	}
+
+	phash := participantListHashV2(allDevices)
+
+	if cli.shouldIncludeReportingToken(message) && message.GetMessageContextInfo().GetMessageSecret() != nil {
+		node.Content = append(node.GetChildren(), cli.getMessageReportingToken(messagePlaintext, message, ownID, to, id))
+	}
+
+	if tcToken, err := cli.Store.PrivacyTokens.GetPrivacyToken(ctx, to); err != nil {
+		cli.Log.Warnf("Failed to get privacy token for %s: %v", to, err)
+	} else if tcToken != nil {
+		node.Content = append(node.GetChildren(), waBinary.Node{
+			Tag:     "tctoken",
+			Content: tcToken.Token,
+		})
+	}
+
+	start = time.Now()
+	data, err := cli.sendNodeAndGetData(ctx, *node)
+	timings.Send = time.Since(start)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to send message node: %w", err)
+	}
+	return phash, data, nil
+}
+
 // RevokeMessage deletes the given message from everyone in the chat.
 //
 // This method will wait for the server to acknowledge the revocation message before returning.

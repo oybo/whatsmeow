@@ -836,9 +836,8 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 			return // 主动跳出
 		}
 
-		// 处理监听判断是否其他关联设备发送的消息
+		// 处理接收消息后回复<receipt
 		if node.Tag == "message" {
-			// 判断是否为自己的其他设备发送的消息   逻辑:
 			// 1. 属于接收的message
 			// 2. from里是自己的jid或者lid，并且 recipient的值不能为空且不能为自己的jid或lid
 			recipient, ok := node.Attrs["recipient"]
@@ -858,7 +857,7 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 				fmt.Printf("是否该账户下关联设备发送的消息：%v \n", isFromMeMsg)
 			}
 
-			jid, err := toJID(msg_from)
+			jid, _ := toJID(msg_from)
 
 			// 应该在收到消息的时候发送一个接收到的回执
 			// <receipt id="ACEFAAB0CDA7505946A0BBD806A876BC" to="30095439847465@lid" />
@@ -869,13 +868,6 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 					"to": jid,
 				},
 			})
-
-			// 2、发送订阅请求
-			// <presence type="subscribe" to="639757430046@s.whatsapp.net"><tctoken>0401173767940d8cc2be16</tctoken></presence>
-			if err != nil {
-				return
-			}
-			_ = cli.SubscribePresence(ctx, jid)
 
 			go func() {
 				// 延迟1 - 2 秒
