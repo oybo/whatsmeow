@@ -127,33 +127,76 @@ var BaseClientPayload = &waWa6.ClientPayload{
 var DeviceProps = &waCompanionReg.DeviceProps{
 	Os: proto.String("Windows"),
 	Version: &waCompanionReg.DeviceProps_AppVersion{
-		Primary:   proto.Uint32(0),
-		Secondary: proto.Uint32(1),
+		//Primary:   proto.Uint32(0),
+		//Secondary: proto.Uint32(1),
+		//Tertiary:  proto.Uint32(0),
+		Primary:   proto.Uint32(10),
+		Secondary: proto.Uint32(0),
 		Tertiary:  proto.Uint32(0),
 	},
 	HistorySyncConfig: &waCompanionReg.DeviceProps_HistorySyncConfig{
-		FullSyncDaysLimit:                        nil,
-		FullSyncSizeMbLimit:                      nil,
-		StorageQuotaMb:                           proto.Uint32(10240),
-		InlineInitialPayloadInE2EeMsg:            proto.Bool(true),
-		RecentSyncDaysLimit:                      nil,
-		SupportCallLogHistory:                    proto.Bool(false),
-		SupportBotUserAgentChatHistory:           proto.Bool(true),
-		SupportCagReactionsAndPolls:              proto.Bool(true),
-		SupportBizHostedMsg:                      proto.Bool(true),
+		//FullSyncDaysLimit:                        nil,
+		//FullSyncSizeMbLimit:                      nil,
+		//StorageQuotaMb:                           proto.Uint32(10240),
+		//InlineInitialPayloadInE2EeMsg:            proto.Bool(true),
+		//RecentSyncDaysLimit:                      nil,
+		//SupportCallLogHistory:                    proto.Bool(false),
+		//SupportBotUserAgentChatHistory:           proto.Bool(true),
+		//SupportCagReactionsAndPolls:              proto.Bool(true),
+		//SupportBizHostedMsg:                      proto.Bool(true),
+		//SupportRecentSyncChunkMessageCountTuning: proto.Bool(true),
+		//SupportHostedGroupMsg:                    proto.Bool(true),
+		//SupportFbidBotChatHistory:                proto.Bool(true),
+		//SupportAddOnHistorySyncMigration:         nil,
+		//SupportMessageAssociation:                proto.Bool(true),
+		//SupportGroupHistory:                      proto.Bool(true),
+		//OnDemandReady:                            nil,
+		//SupportGuestChat:                         nil,
+		//CompleteOnDemandReady:                    nil,
+		//ThumbnailSyncDaysLimit:                   proto.Uint32(60),
+		//InitialSyncMaxMessagesPerChat:            nil,
+		//SupportManusHistory:                      proto.Bool(true),
+		//SupportHatchHistory:                      proto.Bool(true),
+		// 指定客户端可用于存储同步历史的空间上限（单位 MB）
+		// 3
+		StorageQuotaMb: proto.Uint32(10240),
+		// 4
+		// 是否在首次端到端加密消息中内联包含初始同步数据
+		InlineInitialPayloadInE2EeMsg: proto.Bool(true),
+		// 是否支持同步通话记录历史
+		// 6
+		SupportCallLogHistory: proto.Bool(false),
+		// 是否支持同步Bot 用户代理会话历史
+		// 7
+		SupportBotUserAgentChatHistory: proto.Bool(true), // 0
+		// 是否支持同步消息反应 (Reactions) 和 投票 (Polls)
+		// 8
+		SupportCagReactionsAndPolls: proto.Bool(true),
+		// 是否支持同步 Biz Hosted Message
+		// 9
+		SupportBizHostedMsg: proto.Bool(true), // 0
+		// 是否支持 Recent Sync Chunk 动态消息数量调整
+		// 10
 		SupportRecentSyncChunkMessageCountTuning: proto.Bool(true),
-		SupportHostedGroupMsg:                    proto.Bool(true),
-		SupportFbidBotChatHistory:                proto.Bool(true),
-		SupportAddOnHistorySyncMigration:         nil,
-		SupportMessageAssociation:                proto.Bool(true),
-		SupportGroupHistory:                      proto.Bool(true),
-		OnDemandReady:                            nil,
-		SupportGuestChat:                         nil,
-		CompleteOnDemandReady:                    nil,
-		ThumbnailSyncDaysLimit:                   proto.Uint32(60),
-		InitialSyncMaxMessagesPerChat:            nil,
-		SupportManusHistory:                      proto.Bool(true),
-		SupportHatchHistory:                      proto.Bool(true),
+		// 是否支持 Hosted Group Message 同步这些群聊的消息
+		// 11
+		SupportHostedGroupMsg: proto.Bool(true),
+		// 是否支持同步 FBID Bot 聊天记录
+		// 12
+		SupportFbidBotChatHistory: proto.Bool(true), // 0
+		// 是否支持 Message Association 元数据同步
+		// 14
+		SupportMessageAssociation: proto.Bool(true),
+		// 是否支持同步 群组历史消息
+		// 15
+		SupportGroupHistory: proto.Bool(false),
+		// 缩略图同步天数限制
+		// 19
+		ThumbnailSyncDaysLimit: proto.Uint32(60),
+		// 21
+		SupportManusHistory: proto.Bool(true),
+		// 22
+		SupportHatchHistory: proto.Bool(true),
 	},
 	PlatformType:    waCompanionReg.DeviceProps_CHROME.Enum(),
 	RequireFullSync: proto.Bool(false),
