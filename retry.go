@@ -425,6 +425,7 @@ func (cli *Client) delayedRequestMessageFromPhone(info *types.MessageInfo) {
 func (cli *Client) immediateRequestMessageFromPhone(ctx context.Context, info *types.MessageInfo) {
 	_, err := cli.SendMessage(
 		ctx,
+		true,
 		false,
 		cli.getOwnID().ToNonAD(),
 		cli.BuildUnavailableMessageRequest(info.Chat, info.Sender, info.ID),
