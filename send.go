@@ -508,12 +508,19 @@ func (cli *Client) preSendDM(
 		node.Content = append(node.GetChildren(), cli.getMessageReportingToken(messagePlaintext, message, ownID, to, id))
 	}
 
-	if tcToken, err := cli.Store.PrivacyTokens.GetPrivacyToken(ctx, to); err != nil {
-		cli.Log.Warnf("Failed to get privacy token for %s: %v", to, err)
-	} else if tcToken != nil {
+	tcTokenBytes, tcErr := cli.ensureTCToken(ctx, to)
+	if tcErr != nil {
+		cli.Log.Warnf("Failed to get privacy token for %s: %v", to, tcErr)
+	}
+	if len(tcTokenBytes) > 0 {
 		node.Content = append(node.GetChildren(), waBinary.Node{
 			Tag:     "tctoken",
-			Content: tcToken.Token,
+			Content: tcTokenBytes,
+		})
+	} else if csToken := cli.generateCsToken(ctx, to); len(csToken) > 0 {
+		node.Content = append(node.GetChildren(), waBinary.Node{
+			Tag:     "cstoken",
+			Content: csToken,
 		})
 	}
 
@@ -523,7 +530,21 @@ func (cli *Client) preSendDM(
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to send message node: %w", err)
 	}
+
+	storageJID := cli.resolveTCTokenStorageLID(ctx, to)
+	if shouldSendTCTokenInChatAction(to) && shouldSendNewTCToken(cli.getTCTokenSenderTS(storageJID)) {
+		go cli.issuePrivacyTokenAndSave(storageJID, time.Now())
+	}
+
 	return phash, data, nil
+}
+
+func (cli *Client) SendPeerMessage(ctx context.Context, message *waE2E.Message) (SendResponse, error) {
+	ownID := cli.getOwnID().ToNonAD()
+	if ownID.IsEmpty() {
+		return SendResponse{}, ErrNotLoggedIn
+	}
+	return cli.SendMessage(ctx, true, false, ownID, message, SendRequestExtra{Peer: true})
 }
 
 // RevokeMessage deletes the given message from everyone in the chat.
@@ -1093,6 +1114,8 @@ func getEditAttribute(msg *waE2E.Message) types.EditAttribute {
 		return types.EditAttributeSenderRevoke
 	case msg.KeepInChatMessage != nil && msg.KeepInChatMessage.GetKey().GetFromMe() && msg.KeepInChatMessage.GetKeepType() == waE2E.KeepType_UNDO_KEEP_FOR_ALL:
 		return types.EditAttributeSenderRevoke
+	case msg.PinInChatMessage != nil:
+		return types.EditAttributePinInChat
 	}
 	return types.EditAttributeEmpty
 }
@@ -1113,7 +1136,7 @@ func (cli *Client) preparePeerMessageNode(
 	if message.GetProtocolMessage().GetType() == waE2E.ProtocolMessage_APP_STATE_SYNC_KEY_REQUEST {
 		attrs["push_priority"] = "high"
 	} else if message.GetProtocolMessage().GetPeerDataOperationRequestMessage().GetPeerDataOperationRequestType() == waE2E.PeerDataOperationRequestType_HISTORY_SYNC_ON_DEMAND {
-		//attrs["push_priority"] = "high_force"
+		attrs["push_priority"] = "high_force"
 		attrs["privacy_sensitive"] = "1"
 	}
 	start := time.Now()

@@ -29,19 +29,21 @@ import (
 
 // PairClientType is the type of client to use with PairCode.
 // The type is automatically filled based on store.DeviceProps.PlatformType (which is what QR login uses).
-type PairClientType int
+type PairClientType string
 
 const (
-	PairClientUnknown PairClientType = iota
-	PairClientChrome
-	PairClientEdge
-	PairClientFirefox
-	PairClientIE
-	PairClientOpera
-	PairClientSafari
-	PairClientElectron
-	PairClientUWP
-	PairClientOtherWebClient
+	PairClientUnknown        PairClientType = "0"
+	PairClientChrome         PairClientType = "1"
+	PairClientEdge           PairClientType = "2"
+	PairClientFirefox        PairClientType = "3"
+	PairClientIE             PairClientType = "4"
+	PairClientOpera          PairClientType = "5"
+	PairClientSafari         PairClientType = "6"
+	PairClientElectron       PairClientType = "7"
+	PairClientUWP            PairClientType = "8"
+	PairClientOtherWebClient PairClientType = "9"
+	PairClientMacOS          PairClientType = "c"
+	PairClientAndroid        PairClientType = "e"
 )
 
 var notNumbers = regexp.MustCompile("[^0-9]")
@@ -58,8 +60,7 @@ func generateCompanionEphemeralKey() (ephemeralKeyPair *keys.KeyPair, ephemeralK
 	ephemeralKeyPair = keys.NewKeyPair()
 	salt := random.Bytes(32)
 	iv := random.Bytes(16)
-	//linkingCode := random.Bytes(5)
-	linkingCode := []byte{0x39, 0xCE, 0x73, 0x9C, 0xE7} // 固定验证码为 8888-8888
+	linkingCode := random.Bytes(5)
 	encodedLinkingCode = linkingBase32.EncodeToString(linkingCode)
 	linkCodeKey := pbkdf2.Key([]byte(encodedLinkingCode), salt, 2<<16, 32, sha256.New)
 	linkCipherBlock, _ := aes.NewCipher(linkCodeKey)
@@ -115,7 +116,7 @@ func (cli *Client) PairPhone(ctx context.Context, phone string, showPushNotifica
 			Content: []waBinary.Node{
 				{Tag: "link_code_pairing_wrapped_companion_ephemeral_pub", Content: ephemeralKey},
 				{Tag: "companion_server_auth_key_pub", Content: cli.Store.NoiseKey.Pub[:]},
-				{Tag: "companion_platform_id", Content: strconv.Itoa(int(clientType))},
+				{Tag: "companion_platform_id", Content: string(clientType)},
 				{Tag: "companion_platform_display", Content: clientDisplayName},
 				{Tag: "link_code_pairing_nonce", Content: []byte{0}},
 			},
@@ -170,6 +171,8 @@ func (cli *Client) handleCodePairNotification(ctx context.Context, parentNode *w
 			Tag: "link_code_pairing_wrapped_primary_ephemeral_pub",
 			In:  "notification",
 		}
+	} else if len(wrappedPrimaryEphemeralPub) < 80 {
+		return fmt.Errorf("unexpected length of link_code_pairing_wrapped_primary_ephemeral_pub: %d", len(wrappedPrimaryEphemeralPub))
 	}
 	primaryIdentityPub, ok := node.GetChildByTag("primary_identity_pub").Content.([]byte)
 	if !ok {
