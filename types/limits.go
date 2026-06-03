@@ -38,24 +38,42 @@ const (
 type ReachoutTimelockEnforcementType string
 
 const (
-	ReachoutTimelockEnforcementTypeDefault                                     ReachoutTimelockEnforcementType = "DEFAULT"
-	ReachoutTimelockEnforcementTypeBizQuality                                  ReachoutTimelockEnforcementType = "BIZ_QUALITY"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationAdult                   ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_ADULT"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationAlcohol                 ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_ALCOHOL"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationAnimals                 ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_ANIMALS"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationBodyPartsFluids         ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_BODY_PARTS_FLUIDS"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationDating                  ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_DATING"
+	// 默认处罚
+	ReachoutTimelockEnforcementTypeDefault ReachoutTimelockEnforcementType = "DEFAULT"
+	// 商业质量分过低
+	ReachoutTimelockEnforcementTypeBizQuality ReachoutTimelockEnforcementType = "BIZ_QUALITY"
+	// 成人内容
+	ReachoutTimelockEnforcementTypeBizCommerceViolationAdult ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_ADULT"
+	// 酒类推广
+	ReachoutTimelockEnforcementTypeBizCommerceViolationAlcohol ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_ALCOHOL"
+	// 活体动物交易
+	ReachoutTimelockEnforcementTypeBizCommerceViolationAnimals ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_ANIMALS"
+	// 人体组织/体液。黑市类风控
+	ReachoutTimelockEnforcementTypeBizCommerceViolationBodyPartsFluids ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_BODY_PARTS_FLUIDS"
+	// 交友/约会，色情
+	ReachoutTimelockEnforcementTypeBizCommerceViolationDating ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_DATING"
+	// 数字产品
 	ReachoutTimelockEnforcementTypeBizCommerceViolationDigitalServicesProducts ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_DIGITAL_SERVICES_PRODUCTS"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationDrugs                   ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_DRUGS"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationDrugsOnlyOTC            ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_DRUGS_ONLY_OTC"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationGambling                ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_GAMBLING"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationHealthcare              ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_HEALTHCARE"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationRealFakeCurrency        ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_REAL_FAKE_CURRENCY"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationSupplements             ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_SUPPLEMENTS"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationTobacco                 ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_TOBACCO"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationViolentContent          ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_VIOLENT_CONTENT"
-	ReachoutTimelockEnforcementTypeBizCommerceViolationWeapons                 ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_WEAPONS"
-	ReachoutTimelockEnforcementTypeWebCompanionOnly                            ReachoutTimelockEnforcementType = "WEB_COMPANION_ONLY"
+	// 药物
+	ReachoutTimelockEnforcementTypeBizCommerceViolationDrugs ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_DRUGS"
+	// 非处方药
+	ReachoutTimelockEnforcementTypeBizCommerceViolationDrugsOnlyOTC ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_DRUGS_ONLY_OTC"
+	// 博彩
+	ReachoutTimelockEnforcementTypeBizCommerceViolationGambling ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_GAMBLING"
+	// 医疗
+	ReachoutTimelockEnforcementTypeBizCommerceViolationHealthcare ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_HEALTHCARE"
+	// 真钱/假币
+	ReachoutTimelockEnforcementTypeBizCommerceViolationRealFakeCurrency ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_REAL_FAKE_CURRENCY"
+	// 保健品
+	ReachoutTimelockEnforcementTypeBizCommerceViolationSupplements ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_SUPPLEMENTS"
+	// 烟草
+	ReachoutTimelockEnforcementTypeBizCommerceViolationTobacco ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_TOBACCO"
+	// 暴力内容
+	ReachoutTimelockEnforcementTypeBizCommerceViolationViolentContent ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_VIOLENT_CONTENT"
+	// 武器
+	ReachoutTimelockEnforcementTypeBizCommerceViolationWeapons ReachoutTimelockEnforcementType = "BIZ_COMMERCE_VIOLATION_WEAPONS"
+	// 网页从设备
+	ReachoutTimelockEnforcementTypeWebCompanionOnly ReachoutTimelockEnforcementType = "WEB_COMPANION_ONLY"
 )
 
 type NewChatMessageCappingInfo struct {

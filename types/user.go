@@ -91,6 +91,16 @@ type IsOnWhatsAppResponse struct {
 	VerifiedName *VerifiedName // If the phone is a business, the verified business details.
 }
 
+// IsOnWhatsAppResponseNew contains information received in response to checking if a phone number is on WhatsApp.
+type IsOnWhatsAppResponseNew struct {
+	Query string // The query string used
+	LID   JID    // The canonical user ID	注意这里改完之后返回的是lid
+	JID   JID    // 这里才是jid
+	IsIn  bool   // Whether the phone is registered or not.
+
+	VerifiedName *VerifiedName // If the phone is a business, the verified business details.
+}
+
 // BusinessMessageLinkTarget contains the info that is found using a business message link (see Client.ResolveBusinessMessageLink)
 type BusinessMessageLinkTarget struct {
 	JID JID // The JID of the business.

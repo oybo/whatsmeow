@@ -176,27 +176,32 @@ func (cli *Client) SetStatusMessage(ctx context.Context, msg string) error {
 
 // IsOnWhatsApp checks if the given phone numbers are registered on WhatsApp.
 // The phone numbers should be in international format, including the `+` prefix.
-func (cli *Client) IsOnWhatsApp(ctx context.Context, phones []string) ([]types.IsOnWhatsAppResponse, error) {
+func (cli *Client) IsOnWhatsApp(ctx context.Context, phones []string) ([]types.IsOnWhatsAppResponseNew, error) {
 	jids := make([]types.JID, len(phones))
 	for i := range jids {
 		jids[i] = types.NewJID(phones[i], types.LegacyUserServer)
 	}
 	list, err := cli.usync(ctx, jids, "query", "interactive", []waBinary.Node{
 		{Tag: "business", Content: []waBinary.Node{{Tag: "verified_name"}}},
-		{Tag: "contact"},
+		//{Tag: "contact"},
+		{Tag: "contact", Attrs: waBinary.Attrs{"addressing_mode": "lid"}}, // 更改，支持返回lid
 	})
 	if err != nil {
 		return nil, err
 	}
-	output := make([]types.IsOnWhatsAppResponse, 0, len(jids))
+	output := make([]types.IsOnWhatsAppResponseNew, 0, len(jids))
 	querySuffix := "@" + types.LegacyUserServer
+
+	mappings := make([]store.LIDMapping, 0)
+
 	for _, child := range list.GetChildren() {
 		jid, jidOK := child.Attrs["jid"].(types.JID)
 		if child.Tag != "user" || !jidOK {
 			continue
 		}
-		var info types.IsOnWhatsAppResponse
-		info.JID = jid
+		var info types.IsOnWhatsAppResponseNew
+		info.LID = jid
+		info.JID = child.Attrs["pn_jid"].(types.JID)
 		info.VerifiedName, err = parseVerifiedName(child.GetChildByTag("business"))
 		if err != nil {
 			cli.Log.Warnf("Failed to parse %s's verified name details: %v", jid, err)
@@ -206,6 +211,17 @@ func (cli *Client) IsOnWhatsApp(ctx context.Context, phones []string) ([]types.I
 		contactQuery, _ := contactNode.Content.([]byte)
 		info.Query = strings.TrimSuffix(string(contactQuery), querySuffix)
 		output = append(output, info)
+
+		if !info.LID.IsEmpty() {
+			mappings = append(mappings, store.LIDMapping{PN: info.JID, LID: info.LID})
+		}
+
+		err = cli.Store.LIDs.PutManyLIDMappings(ctx, mappings)
+		if err != nil {
+			// not worth returning on the error, instead just post a log
+			cli.Log.Errorf("Failed to place LID mappings from USync call")
+		}
+
 	}
 	return output, nil
 }

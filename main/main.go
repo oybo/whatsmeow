@@ -560,14 +560,10 @@ func AddContact(waCli *whatsmeow.Client, phoneNumber string, name string) error 
 
 				Value: &waSyncAction.SyncActionValue{
 					ContactAction: &waSyncAction.ContactAction{
-						FullName:  proto.String(name),
-						FirstName: proto.String(name),
-						Username:  proto.String(""),
-
+						FullName: proto.String(name),
 						// 这里别写反
 						PnJID:  proto.String(pnJID.String()),
 						LidJID: proto.String(lidJID.String()),
-
 						// 必须 true
 						SaveOnPrimaryAddressbook: proto.Bool(true),
 					},
