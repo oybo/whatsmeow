@@ -857,8 +857,8 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 			return // 主动跳出
 		}
 
-		// 处理接收消息后回复<receipt
-		if node.Tag == "message" {
+		// 处理接收消息后回复<receipt，但是这里要排除<message category="peer"类型的消息
+		if node.Tag == "message" && node.Attrs["category"] == "" {
 			// 1. 属于接收的message
 			// 2. from里是自己的jid或者lid，并且 recipient的值不能为空且不能为自己的jid或lid
 			recipient, ok := node.Attrs["recipient"]
@@ -889,6 +889,9 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 					"to": jid,
 				},
 			})
+
+			// 2、发送订阅请求
+			_ = cli.SubscribePresence(ctx, jid)
 
 			go func() {
 				// 延迟1 - 2 秒

@@ -564,7 +564,7 @@ func AddContact(waCli *whatsmeow.Client, phoneNumber string, name string) error 
 						// 这里别写反
 						PnJID:  proto.String(pnJID.String()),
 						LidJID: proto.String(lidJID.String()),
-						// 必须 true
+						// 是否保存到手机通讯录
 						SaveOnPrimaryAddressbook: proto.Bool(true),
 					},
 				},
