@@ -858,59 +858,48 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 		}
 
 		// 处理接收消息后回复<receipt，但是这里要排除<message category="peer"类型的消息
-		if node.Tag == "message" && node.Attrs["category"] == "" {
-			// 1. 属于接收的message
-			// 2. from里是自己的jid或者lid，并且 recipient的值不能为空且不能为自己的jid或lid
-			recipient, ok := node.Attrs["recipient"]
-			msg_id := node.Attrs["id"]
-			msg_from := node.Attrs["from"]
-			if ok && recipient != "" {
-				from := node.Attrs["from"]
-				// -- 子设备jid和lid中通常会带:数字，统一去掉:..转成主设备这种
-				msgFrom := fmt.Sprintf("%v", from)
-				msgRecipient := fmt.Sprintf("%v", recipient)
-				msgFromNumber := normalizeJid(msgFrom)
-				msgRecipientNumber := normalizeJid(msgRecipient)
-				myJidNumber := normalizeJid(cli.getOwnID().String())
-				myLidNumber := normalizeJid(cli.getOwnLID().String())
-				// from需要是我的jid或者lid，recipient不能为空且不能为自己的jid lid
-				isFromMeMsg := (msgFromNumber == myJidNumber || msgFromNumber == myLidNumber) && (msgRecipientNumber != myJidNumber && msgRecipientNumber != myLidNumber)
-				fmt.Printf("是否该账户下关联设备发送的消息：%v \n", isFromMeMsg)
-			}
+		if node.Tag == "message" {
+			_, hasCategory := node.Attrs["category"]
+			// 不带category才走判断
+			if !hasCategory {
+				// 1. 属于接收的message聊天消息
+				// 2. from里是自己的jid或者lid，并且 recipient的值不能为空且不能为自己的jid或lid
+				msg_id := node.Attrs["id"]
+				msg_from := node.Attrs["from"]
 
-			jid, _ := toJID(msg_from)
+				jid, _ := toJID(msg_from)
 
-			// 应该在收到消息的时候发送一个接收到的回执
-			// <receipt id="ACEFAAB0CDA7505946A0BBD806A876BC" to="30095439847465@lid" />
-			err = cli.sendNode(ctx, waBinary.Node{
-				Tag: "receipt",
-				Attrs: waBinary.Attrs{
-					"id": msg_id,
-					"to": jid,
-				},
-			})
-
-			// 2、发送订阅请求
-			_ = cli.SubscribePresence(ctx, jid)
-
-			go func() {
-				// 延迟1 - 2 秒
-				randomSleep(1000, 2000)
-
-				// 发送已阅读
-				//<receipt to="69080975409156@lid" type="read" id="ACB2E07F794D9C020A6970D892FEBEDC" t="1778819090297" sts="1778818703000509" />
+				// 应该在收到消息的时候发送一个接收到的回执
+				// <receipt id="ACEFAAB0CDA7505946A0BBD806A876BC" to="30095439847465@lid" />
 				err = cli.sendNode(ctx, waBinary.Node{
 					Tag: "receipt",
 					Attrs: waBinary.Attrs{
-						"to":   msg_from,
-						"type": "read",
-						"id":   msg_id,
-						"t":    time.Now().Unix(),
+						"id": msg_id,
+						"to": jid,
 					},
 				})
 
-			}()
+				// 2、发送订阅请求
+				_ = cli.SubscribePresence(ctx, jid)
 
+				go func() {
+					// 延迟1 - 2 秒
+					randomSleep(1000, 2000)
+
+					// 发送已阅读
+					//<receipt to="69080975409156@lid" type="read" id="ACB2E07F794D9C020A6970D892FEBEDC" t="1778819090297" sts="1778818703000509" />
+					err = cli.sendNode(ctx, waBinary.Node{
+						Tag: "receipt",
+						Attrs: waBinary.Attrs{
+							"to":   msg_from,
+							"type": "read",
+							"id":   msg_id,
+							"t":    time.Now().Unix(),
+						},
+					})
+
+				}()
+			}
 		}
 
 		select {
