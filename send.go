@@ -183,7 +183,7 @@ type SendRequestExtra struct {
 // in binary/proto/def.proto may be useful to find out all the allowed fields. Printing the RawMessage
 // field in incoming message events to figure out what it contains is also a good way to learn how to
 // send the same kind of message.
-func (cli *Client) SendMessage(ctx context.Context, isLid bool, notToMe bool, to types.JID, message *waE2E.Message, extra ...SendRequestExtra) (resp SendResponse, err error) {
+func (cli *Client) SendMessage(ctx context.Context, isLid bool, notToMe bool, isBiz bool, to types.JID, message *waE2E.Message, extra ...SendRequestExtra) (resp SendResponse, err error) {
 	if cli == nil {
 		err = ErrClientIsNil
 		return
@@ -392,12 +392,12 @@ func (cli *Client) SendMessage(ctx context.Context, isLid bool, notToMe bool, to
 	var data []byte
 	switch to.Server {
 	case types.GroupServer, types.BroadcastServer:
-		phash, data, err = cli.sendGroup(ctx, ownID, to, groupParticipants, req.ID, message, &resp.DebugTimings, extraParams)
+		phash, data, err = cli.sendGroup(ctx, ownID, to, groupParticipants, req.ID, message, &resp.DebugTimings, extraParams, isBiz)
 	case types.DefaultUserServer, types.BotServer, types.HiddenUserServer:
 		if req.Peer {
 			data, err = cli.sendPeerMessage(ctx, to, req.ID, message, &resp.DebugTimings)
 		} else {
-			phash, data, err = cli.sendDM(ctx, ownID, to, req.ID, message, &resp.DebugTimings, extraParams, notToMe)
+			phash, data, err = cli.sendDM(ctx, ownID, to, req.ID, message, &resp.DebugTimings, extraParams, notToMe, isBiz)
 		}
 	case types.NewsletterServer:
 		data, err = cli.sendNewsletter(ctx, to, req.ID, message, req.MediaHandle, &resp.DebugTimings)
@@ -462,89 +462,12 @@ func (cli *Client) SendMessage(ctx context.Context, isLid bool, notToMe bool, to
 	return
 }
 
-/*
-预发送消息，只是获取对方session，但是不真实发送消息出去。
-*/
-func (cli *Client) PreSendMessage(ctx context.Context, to types.JID) (resp SendResponse, err error) {
-	ownID := cli.getOwnID()
-	var extraParams nodeExtraParams
-	message := &waE2E.Message{
-		Conversation: proto.String("hello"),
-	}
-
-	_, _, err = cli.preSendDM(ctx, ownID, to, "", message, &resp.DebugTimings, extraParams)
-
-	return SendResponse{}, err
-}
-
-func (cli *Client) preSendDM(
-	ctx context.Context,
-	ownID,
-	to types.JID,
-	id types.MessageID,
-	message *waE2E.Message,
-	timings *MessageDebugTimings,
-	extraParams nodeExtraParams,
-) (string, []byte, error) {
-	start := time.Now()
-
-	messagePlaintext, deviceSentMessagePlaintext, err := marshalMessage(to, message)
-	timings.Marshal = time.Since(start)
-	if err != nil {
-		return "", nil, err
-	}
-
-	node, allDevices, err := cli.prepareMessageNode(
-		ctx, to, id, message, []types.JID{to, ownID.ToNonAD()},
-		messagePlaintext, deviceSentMessagePlaintext, timings, extraParams,
-	)
-	if err != nil {
-		return "", nil, err
-	}
-
-	phash := participantListHashV2(allDevices)
-
-	if cli.shouldIncludeReportingToken(message) && message.GetMessageContextInfo().GetMessageSecret() != nil {
-		node.Content = append(node.GetChildren(), cli.getMessageReportingToken(messagePlaintext, message, ownID, to, id))
-	}
-
-	tcTokenBytes, tcErr := cli.ensureTCToken(ctx, to)
-	if tcErr != nil {
-		cli.Log.Warnf("Failed to get privacy token for %s: %v", to, tcErr)
-	}
-	if len(tcTokenBytes) > 0 {
-		node.Content = append(node.GetChildren(), waBinary.Node{
-			Tag:     "tctoken",
-			Content: tcTokenBytes,
-		})
-	} else if csToken := cli.generateCsToken(ctx, to); len(csToken) > 0 {
-		node.Content = append(node.GetChildren(), waBinary.Node{
-			Tag:     "cstoken",
-			Content: csToken,
-		})
-	}
-
-	start = time.Now()
-	data, err := cli.sendNodeAndGetData(ctx, *node)
-	timings.Send = time.Since(start)
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to send message node: %w", err)
-	}
-
-	storageJID := cli.resolveTCTokenStorageLID(ctx, to)
-	if shouldSendTCTokenInChatAction(to) && shouldSendNewTCToken(cli.getTCTokenSenderTS(storageJID)) {
-		go cli.issuePrivacyTokenAndSave(storageJID, time.Now())
-	}
-
-	return phash, data, nil
-}
-
 func (cli *Client) SendPeerMessage(ctx context.Context, message *waE2E.Message) (SendResponse, error) {
 	ownID := cli.getOwnID().ToNonAD()
 	if ownID.IsEmpty() {
 		return SendResponse{}, ErrNotLoggedIn
 	}
-	return cli.SendMessage(ctx, true, false, ownID, message, SendRequestExtra{Peer: true})
+	return cli.SendMessage(ctx, true, false, false, ownID, message, SendRequestExtra{Peer: true})
 }
 
 // RevokeMessage deletes the given message from everyone in the chat.
@@ -554,7 +477,7 @@ func (cli *Client) SendPeerMessage(ctx context.Context, message *waE2E.Message) 
 //
 // Deprecated: This method is deprecated in favor of BuildRevoke
 func (cli *Client) RevokeMessage(ctx context.Context, chat types.JID, id types.MessageID) (SendResponse, error) {
-	return cli.SendMessage(ctx, true, false, chat, cli.BuildRevoke(chat, types.EmptyJID, id))
+	return cli.SendMessage(ctx, true, false, false, chat, cli.BuildRevoke(chat, types.EmptyJID, id))
 }
 
 // BuildMessageKey builds a MessageKey object, which is used to refer to previous messages
@@ -720,7 +643,7 @@ func (cli *Client) SetDisappearingTimer(ctx context.Context, chat types.JID, tim
 		if settingTS.IsZero() {
 			settingTS = time.Now()
 		}
-		_, err = cli.SendMessage(ctx, true, false, chat, &waE2E.Message{
+		_, err = cli.SendMessage(ctx, true, false, false, chat, &waE2E.Message{
 			ProtocolMessage: &waE2E.ProtocolMessage{
 				Type:                      waE2E.ProtocolMessage_EPHEMERAL_SETTING.Enum(),
 				EphemeralExpiration:       proto.Uint32(uint32(timer.Seconds())),
@@ -827,6 +750,7 @@ func (cli *Client) sendGroup(
 	message *waE2E.Message,
 	timings *MessageDebugTimings,
 	extraParams nodeExtraParams,
+	isBiz bool,
 ) (string, []byte, error) {
 	start := time.Now()
 	plaintext, _, err := marshalMessage(to, message)
@@ -862,7 +786,7 @@ func (cli *Client) sendGroup(
 	timings.GroupEncrypt = time.Since(start)
 
 	node, allDevices, err := cli.prepareMessageNode(
-		ctx, to, id, message, participants, skdPlaintext, nil, timings, extraParams,
+		ctx, to, id, message, participants, skdPlaintext, nil, timings, extraParams, isBiz,
 	)
 	if err != nil {
 		return "", nil, err
@@ -921,6 +845,7 @@ func (cli *Client) sendDM(
 	timings *MessageDebugTimings,
 	extraParams nodeExtraParams,
 	notToMe bool, // 不要发给我自己的主设备
+	isBiz bool, // 是否携带biz标签
 ) (string, []byte, error) {
 	start := time.Now()
 	messagePlaintext, deviceSentMessagePlaintext, err := marshalMessage(to, message)
@@ -935,7 +860,7 @@ func (cli *Client) sendDM(
 	}
 	node, allDevices, err := cli.prepareMessageNode(
 		ctx, to, id, message, participants,
-		messagePlaintext, deviceSentMessagePlaintext, timings, extraParams,
+		messagePlaintext, deviceSentMessagePlaintext, timings, extraParams, isBiz,
 	)
 	if err != nil {
 		return "", nil, err
@@ -1181,6 +1106,7 @@ func (cli *Client) getMessageContent(
 	msgAttrs waBinary.Attrs,
 	includeIdentity bool,
 	extraParams nodeExtraParams,
+	isBiz bool,
 ) []waBinary.Node {
 	content := []waBinary.Node{baseNode}
 	if includeIdentity {
@@ -1226,43 +1152,43 @@ func (cli *Client) getMessageContent(
 	//	  	<quality_control source_type="third_party"/>
 	//   </biz>
 
-	//if message.ViewOnceMessage != nil {
-	content = append(content, waBinary.Node{
-		Tag: "biz",
-		Attrs: waBinary.Attrs{
-			"actual_actors":   "2",
-			"host_storage":    "2",
-			"privacy_mode_ts": randomPrivacyModeTS(),
-		},
-		Content: []waBinary.Node{{
-			Tag: "interactive",
+	if isBiz {
+		content = append(content, waBinary.Node{
+			Tag: "biz",
 			Attrs: waBinary.Attrs{
-				"type": "native_flow",
-				"v":    "1",
+				"actual_actors":   "2",
+				"host_storage":    "2",
+				"privacy_mode_ts": randomPrivacyModeTS(),
 			},
 			Content: []waBinary.Node{{
-				Tag: "native_flow",
+				Tag: "interactive",
 				Attrs: waBinary.Attrs{
-					"name": "mixed",
-					"v":    "9",
+					"type": "native_flow",
+					"v":    "1",
+				},
+				Content: []waBinary.Node{{
+					Tag: "native_flow",
+					Attrs: waBinary.Attrs{
+						"name": "mixed",
+						"v":    "9",
+					},
+				}},
+			}, {
+				Tag: "quality_control",
+				Attrs: waBinary.Attrs{
+					"source_type": "third_party",
 				},
 			}},
-		}, {
-			Tag: "quality_control",
-			Attrs: waBinary.Attrs{
-				"source_type": "third_party",
-			},
-		}},
-	})
-	//}
+		})
 
-	// <bot biz_bot="1"/>
-	content = append(content, waBinary.Node{
-		Tag: "bot",
-		Attrs: waBinary.Attrs{
-			"biz_bot": "1",
-		},
-	})
+		// <bot biz_bot="1"/>
+		content = append(content, waBinary.Node{
+			Tag: "bot",
+			Attrs: waBinary.Attrs{
+				"biz_bot": "1",
+			},
+		})
+	}
 
 	return content
 }
@@ -1283,6 +1209,7 @@ func (cli *Client) prepareMessageNode(
 	plaintext, dsmPlaintext []byte,
 	timings *MessageDebugTimings,
 	extraParams nodeExtraParams,
+	isBiz bool,
 ) (*waBinary.Node, []types.JID, error) {
 	start := time.Now()
 	allDevices, err := cli.GetUserDevices(ctx, participants)
@@ -1344,7 +1271,7 @@ func (cli *Client) prepareMessageNode(
 		Tag:   "message",
 		Attrs: attrs,
 		Content: cli.getMessageContent(
-			participantNode, message, attrs, includeIdentity, extraParams,
+			participantNode, message, attrs, includeIdentity, extraParams, isBiz,
 		),
 	}, allDevices, nil
 }

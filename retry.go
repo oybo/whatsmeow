@@ -378,7 +378,7 @@ func (cli *Client) handleRetryReceipt(ctx context.Context, receipt *events.Recei
 	var content []waBinary.Node
 	if msg.wa != nil {
 		content = cli.getMessageContent(
-			*encrypted, msg.wa, attrs, includeDeviceIdentity, nodeExtraParams{},
+			*encrypted, msg.wa, attrs, includeDeviceIdentity, nodeExtraParams{}, false,
 		)
 	} else {
 		content = []waBinary.Node{
@@ -447,6 +447,7 @@ func (cli *Client) immediateRequestMessageFromPhone(ctx context.Context, info *t
 	_, err := cli.SendMessage(
 		ctx,
 		true,
+		false,
 		false,
 		cli.getOwnID().ToNonAD(),
 		cli.BuildUnavailableMessageRequest(info.Chat, info.Sender, info.ID),
