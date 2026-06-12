@@ -249,7 +249,7 @@ func sendMessageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = SendMessage(true, false, string(jsonBytes))
+	err = SendMessage(true, true, string(jsonBytes))
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
