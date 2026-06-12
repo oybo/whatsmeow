@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
-	_ "github.com/mattn/go-sqlite3" // 使用官方 SQLite 驱动，支持 CGO
+	//_ "github.com/mattn/go-sqlite3" // 使用官方 SQLite 驱动，支持 CGO
+	// 替换为纯 Go 的驱动
+	_ "github.com/glebarez/go-sqlite"
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
-	"go.mau.fi/whatsmeow/message"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waSyncAction"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -27,10 +29,11 @@ import (
 	"time"
 )
 
+const globalCacheDir = "./main"
+
 var (
 	client *whatsmeow.Client
 	ctx    = context.Background()
-	lastQR string
 )
 
 func main() {
@@ -53,7 +56,8 @@ func main() {
 // 请求配对码登录
 func pairLoginHandler(w http.ResponseWriter, r *http.Request) {
 	type Req struct {
-		PHONE string `json:"phone"`
+		PHONE    string `json:"phone"`
+		PairCode bool   `json:"pairCode"`
 	}
 	var req Req
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -65,9 +69,11 @@ func pairLoginHandler(w http.ResponseWriter, r *http.Request) {
 	dbLog := waLog.Stdout("Database", "DEBUG", true)
 
 	// 如果要新扫码账户登录，改个数据库名就行
-	var userDbName = "whatsmeow_" + req.PHONE + ".db"
+	var userDbName = globalCacheDir + "/db/" + "whatsmeow_" + req.PHONE + ".db"
 	// 创建 SQLite 数据库存储
-	container, err := sqlstore.New(ctx, "sqlite3", "file:"+userDbName+"?_foreign_keys=on", dbLog)
+	// 改为 "sqlite"
+	//container, err := sqlstore.New(ctx, "sqlite3", "file:"+userDbName+"?_foreign_keys=on", dbLog)
+	container, err := sqlstore.New(ctx, "sqlite", "file:"+userDbName+"?_pragma=foreign_keys(1)", dbLog)
 	if err != nil {
 		panic(err)
 	}
@@ -92,152 +98,109 @@ func pairLoginHandler(w http.ResponseWriter, r *http.Request) {
 		switch v := evt.(type) {
 		case *events.Connected:
 			fmt.Println("✅ 已连接 WhatsApp")
-			// 发送同步regular_high的协议， 每次连接成功都发一次。
-			//_ = client.FetchAppState(ctx, "regular_high", false, false)
-
-			//jid, _ := types.ParseJID("923288387163@s.whatsapp.net")
-			//realJID, _ := client.Store.GetAltJID(ctx, jid)
-			//if realJID.IsEmpty() {
-			//info, _ := client.GetUserInfo(ctx, []types.JID{jid})
-			//fmt.Printf("userInfo: %+v\n", info)
-			//	realJID, _ = client.Store.GetAltJID(ctx, jid)
-			//}
-			//fmt.Printf("realJID: %+v\n", realJID)
-
-			//devices_, _ := client.GetUserDevices(ctx, []types.JID{jid})
-			//fmt.Printf("userDevices: %+v\n", devices_)
-
-			//// 加上一些新协议，测试有没有效果
-			//go mewXml()
-
-			//// 获取群邀请链接，必须是管理员才能获取
-			//groupJid := types.NewJID("120363406210968859", "g.us")
-			//link, err := client.GetGroupInviteLink(ctx, groupJid, false)
-			//if err != nil {
-			//	log.Fatal(err)
-			//}
-			//fmt.Println("invite link:", link)
-		case *events.AppStateSyncComplete:
-			// 同步完成，但是同步事件有多个，所以这里也就会调用多次
-			fmt.Println("AppStateSyncComplete")
+		case *events.Disconnected:
+			// 断开连接了，需要考虑重连
+			fmt.Println("===Disconnected")
 		case *events.Message:
+
 			fmt.Println("收到消息==============")
+
+			// 是否自己账号发出的
+			fmt.Println("是否自己账号发送：", v.Info.IsFromMe)
+
+			// 当前设备ID
+			myDeviceID := client.Store.ID.Device
+
+			// 消息来源设备ID
+			msgDeviceID := v.Info.Sender.Device
+
+			// 是否当前设备发送
+			isFromThisDevice := v.Info.IsFromMe && (myDeviceID == msgDeviceID)
+
+			fmt.Println("当前设备ID：", myDeviceID)
+			fmt.Println("消息设备ID：", msgDeviceID)
+			fmt.Println("是否本设备发送：", isFromThisDevice)
+
 			raw, err := proto.Marshal(v.Message)
 			if err == nil {
 				fmt.Println("message protobuf hex:", hex.EncodeToString(raw))
 			}
-		case *events.Contact:
-			fmt.Printf("=== Contact %v \n", v.JID.String())
-		case *events.Disconnected:
-			// 断开连接了，需要考虑重连
-			fmt.Println("===Disconnected")
-		case *events.KeepAliveTimeout:
-			// 重要回调，心跳超时：此种状态不应该执行发送消息等动作，需要重连
-			fmt.Printf("client.IsConnected() %v \n", client.IsConnected())
-			fmt.Println("===KeepAliveTimeout")
-		case *events.StreamReplaced:
-			// 被顶号
-			fmt.Println("===被顶号")
-			fmt.Printf("client.IsConnected() %v \n", client.IsConnected())
-		case *events.ConnectFailureReason:
-			fmt.Println("===ConnectFailureReason=" + v.NumberString())
-		case *events.GroupInfo:
-			group := v.JID.String()
-			fmt.Println("===创建事件" + group)
 
-			// 群被风控
-			if len(v.UnknownChanges) > 0 {
-				for _, node := range v.UnknownChanges {
-					if node.Tag == "suspended" {
-						fmt.Println("⚠️ 群被 suspended（风控冻结）:", group)
-					}
-				}
+		case *events.LoggedOut:
+			fmt.Println("设备移除:")
+
+		case *events.AppStateSyncComplete:
+
+			fmt.Println("同步AppStateSyncComplete:")
+
+			switch v.Name {
+			case appstate.WAPatchCriticalBlock:
+				fmt.Println("critical_block 同步完成")
+				// 用户资料、pushname、locale 等
+			case appstate.WAPatchCriticalUnblockLow:
+				fmt.Println("critical_unblock_low 同步完成")
+				// 通讯录联系人
+			case appstate.WAPatchRegularLow:
+				fmt.Println("regular_low 同步完成")
+				// pin/archive 等聊天设置
+			case appstate.WAPatchRegularHigh:
+				fmt.Println("regular_high 同步完成")
+				// mute/star 等
+			case appstate.WAPatchRegular:
+				fmt.Println("regular 同步完成")
+				// appstate协议自身数据
 			}
 
-			// 有人被设置为管理员
-			if len(v.Promote) > 0 {
-				for _, phoneNumber := range v.Promote {
-					log.Printf(
-						"[group promote] group=%s user=%s",
-						group,
-						phoneNumber,
-					)
-				}
-			}
+		case *events.AppStateSyncError:
 
-			// 有人被取消管理员
-			if len(v.Demote) > 0 {
-				for _, phoneNumber := range v.Demote {
-					log.Printf(
-						"[group demote] group=%s user=%s",
-						group,
-						phoneNumber,
-					)
-				}
-			}
+			fmt.Println("同步AppStateSyncError:")
+			fmt.Printf(`v="%v"`, v)
 
-			// 有人被加进群
-			if len(v.Join) > 0 {
-				for _, phoneNumber := range v.Join {
-					log.Printf(
-						"[group join] group=%s user=%s",
-						group,
-						phoneNumber,
-					)
-				}
-			}
+		case *events.HistorySync:
+			log.Printf("HISTORY SYNC")
 
-			// 有人离开 / 被移除
-			if len(v.Leave) > 0 {
-				for _, phoneNumber := range v.Leave {
-					log.Printf(
-						"[group leave] group=%s user=%s",
-						group,
-						phoneNumber,
-					)
-				}
-			}
 		}
 	})
 
 	var msg = ""
 
-	// 判断是否需要扫码登录
+	// 已连接
+	if client.IsConnected() {
+		msg = "已连接"
+	}
+
+	err = client.Connect()
+	if err != nil {
+		msg = err.Error()
+	}
+
+	// 未登录 → 返回配对码
 	if client.Store.ID == nil {
-		if true {
-			// -------- 配对码登录
-			// 生成一个配对码
-			msg = "create pairCode 8888-8888"
+
+		fmt.Println("📱 未登录，开始配对:", req.PHONE)
+
+		var code string
+
+		if req.PairCode {
+			// ---------- 配对码登录
 			err = client.Connect()
-			if err != nil {
-				panic(err)
-			}
-			if client.IsConnected() {
-				phoneNumber := req.PHONE
-				_, err := client.PairPhone(ctx, phoneNumber, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
-				if err != nil {
-					fmt.Printf("failed PairPhone %v \n", err)
-				}
-				//// 模拟请求配对码之后断网，输入配对码，出现“出错了，请重试”的情况问题。
-				//go func() {
-				//	time.Sleep(10000 * time.Millisecond)
-				//	client.Disconnect()
-				//	time.Sleep(10000 * time.Millisecond)
-				//	client.Connect()
-				//}()
-			}
+			code, err = client.PairPhone(
+				ctx,
+				req.PHONE,
+				true,
+				whatsmeow.PairClientChrome,
+				"Chrome (Linux)",
+			)
 		} else {
 			// ---------- 二维码登录
+			client.Disconnect()
 			qrChan, _ := client.GetQRChannel(context.Background())
 			err = client.Connect()
-			if err != nil {
-				panic(err)
-			}
 			for evt := range qrChan {
 				// evt.Type: "code", "success", "timeout" 等
 				if evt.Event == "code" {
+					code = evt.Code
 					// 渲染 QR
-					lastQR = evt.Code
 					qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
 					fmt.Println("请使用手机 WhatsApp 扫码登录")
 				} else {
@@ -245,13 +208,14 @@ func pairLoginHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-	} else {
-		// 已登录直接连接
-		msg = "success"
-		err = client.Connect()
+
 		if err != nil {
-			panic(err)
+			msg = err.Error()
 		}
+
+		msg = "配对码:" + code
+	} else {
+		msg = "已直接登录"
 	}
 
 	// 返回成功
@@ -271,133 +235,24 @@ func sendMessageHandler(w http.ResponseWriter, r *http.Request) {
 	startTimeStamp := time.Now().UnixMilli()
 
 	type Req struct {
-		JID     string `json:"jid"`
-		TYPE    int32  `json:"type"`
-		Message string `json:"message"`
-		HEX     string `json:"hex"`
-		Remove  bool   `json:"isRemove"`
+		JSON map[string]interface{} `json:"json"`
 	}
 	var req Req
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	// 把字符串 JID 转成 types.JID
-	jid, _ := types.ParseJID(req.JID)
 
-	// 注释掉 - 不添加该逻辑
-	//// jid升级到lid
-	//realJID, _ := client.Store.GetAltJID(ctx, jid)
-	//if realJID.IsEmpty() {
-	//	info, _ := client.GetUserInfo(ctx, []types.JID{jid})
-	//	fmt.Printf("userInfo: %+v\n", info)
-	//	realJID, _ = client.Store.GetAltJID(ctx, jid)
-	//}
-	//fmt.Printf("realJID: %+v\n", realJID)
-	//if !realJID.IsEmpty() {
-	//	jid = realJID
-	//}
-
-	// -------
-
-	// 下面模拟真实场景补充协议发送-------
-
-	// 1、发送自己在线状态
-	fmt.Println("1、发送自己在线状态" + req.JID)
-	// <presence type="available" name="Tank" />
-	_ = client.SendPresence(ctx, types.PresenceAvailable)
-	// 2-3分钟后离线
-	go func() {
-		// 随机等待 2~3 分钟
-		waitSeconds := 120 + rand.Intn(60)
-		time.Sleep(time.Duration(waitSeconds) * time.Second)
-		// 发送离线状态
-		_ = client.SendPresence(ctx, types.PresenceUnavailable)
-	}()
-
-	// 2、发送订阅请求
-	fmt.Println("2、发送订阅请求" + req.JID)
-	// <presence type="subscribe" to="639757430046@s.whatsapp.net"><tctoken>0401173767940d8cc2be16</tctoken></presence>
-	_ = client.SubscribePresence(ctx, jid)
-
-	// 3、开始输入
-	fmt.Println("3、开始输入" + req.JID)
-	// <chatstate to="639757430046@s.whatsapp.net"><composing /></chatstate>
-	_ = client.SendChatPresence(ctx, jid, types.ChatPresenceComposing, types.ChatPresenceMediaText)
-
-	// 4、查询用户
-	if !strings.Contains(req.JID, "@g.us") {
-		fmt.Println("4、查询用户" + req.JID)
-		devices, _ := client.GetUserDevicesContext(ctx, []types.JID{jid})
-		// 如果设备为空，直接返回错误，用户不存在
-		if len(devices) == 0 {
-			http.Error(w, "no found the user", 500)
-			return
-		}
-	}
-
-	// 延迟0.5 - 1 秒
-	randomSleep(500, 1000)
-
-	// 5、输入结束
-	fmt.Println("5、输入结束" + req.JID)
-	// <chatstate to="639757430046@s.whatsapp.net"><paused /></chatstate>
-	_ = client.SendChatPresence(ctx, jid, types.ChatPresencePaused, types.ChatPresenceMediaText)
-
-	// 6、建立信任
-	fmt.Println("6、建立信任" + req.JID)
-	// <iq to="s.whatsapp.net" type="set" xmlns="privacy" id="29294.52599-149"><tokens><token jid="639757430046@s.whatsapp.net" t="1761622030" type="trusted_contact" /></tokens></iq>
-	_ = client.SetTrustedContact(ctx, req.JID)
-
-	// 发送消息
-	var msg *waE2E.Message
-	switch req.TYPE {
-	case 1:
-		// 普通文本
-		msg = message.BuildTextMessage(req.Message)
-	case 2:
-		//	按钮消息
-		msg = message.BuildButtonMessage()
-	case 3:
-		//	短链位置
-		msg = message.BuildLocalLinkMessage()
-	case 5:
-		//	大图超链
-		msg = message.BuildBigImageMessage()
-	case 6:
-		//	位置带超链按钮
-		msg = message.BuildLocationButtonMessage()
-	case 7:
-		//
-		msg = message.BuildImageUrlMessage()
-	case 13:
-		// 群聊邀请模式3
-		msg = message.BuildGroupMode3()
-	case 20:
-		// 直接传递十六进制字符串，解析反序列化再发送
-		msg = message.BuildMessageFromHex(req.HEX)
-	default:
-		msg = message.BuildTextMessage(req.Message)
-	}
-
-	// 发送消息
-	fmt.Println("7、发送消息" + req.JID)
-	resp, err := client.SendMessage(context.Background(), true, true, true, jid, msg)
+	jsonBytes, err := json.Marshal(req.JSON)
 	if err != nil {
-		http.Error(w, "failed to send message: "+err.Error(), 500)
+		http.Error(w, err.Error(), 500)
 		return
 	}
 
-	//// 延迟0.5 - 1 秒
-	//randomSleep(200, 500)
-
-	// 删除发送的信息
-	if req.Remove {
-		fmt.Printf("8、删除消息 resp.ID=%s , resp.Timestamp=%d \n", resp.ID, resp.Timestamp.Unix())
-		err = message.DeleteChat(client, req.JID, resp.ID, resp.Timestamp.Unix())
-		if err != nil {
-			fmt.Printf("failed DeleteChat: %v", err)
-		}
+	err = SendMessage(true, false, string(jsonBytes))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
 	}
 
 	// 返回成功
@@ -408,6 +263,134 @@ func sendMessageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+func SendMessage(isLid bool, isBiz bool, jsonStr string) error {
+
+	ctx := context.Background()
+
+	var request MessageRequest
+
+	err := json.Unmarshal([]byte(jsonStr), &request)
+	if err != nil {
+		return err
+	}
+
+	// 把字符串 JID 转成 types.JID
+	jid, _ := types.ParseJID(request.To + "@s.whatsapp.net")
+
+	if isLid {
+		fmt.Println("转成lid")
+		// jid升级到lid
+		realJID, _ := client.Store.GetAltJID(ctx, jid)
+		if realJID.IsEmpty() {
+			info, _ := client.GetUserInfo(ctx, []types.JID{jid})
+			fmt.Printf("userInfo: %+v\n", info)
+			realJID, _ = client.Store.GetAltJID(ctx, jid)
+		}
+		if !realJID.IsEmpty() {
+			jid = realJID
+		}
+	}
+
+	fmt.Printf("jid: %s", jid)
+
+	// 4、查询用户
+	devices, err := client.IsOnWhatsApp(ctx, []string{request.To})
+	if err != nil {
+		return err
+	}
+	// 如果设备为空，直接返回错误，用户不存在
+	if len(devices) == 0 {
+		return errors.New("no found the user")
+	}
+
+	// 下面模拟真实场景补充协议发送-------
+
+	// 1、发送自己在线状态
+	// <presence type="available" name="Tank" />
+	_ = client.SendPresence(ctx, types.PresenceAvailable)
+
+	// 2-3分钟后离线
+	go func(c *whatsmeow.Client) {
+		waitSeconds := 120 + rand.Intn(60)
+		time.Sleep(time.Duration(waitSeconds) * time.Second)
+		if c != nil && c.IsConnected() {
+			_ = c.SendPresence(ctx, types.PresenceUnavailable)
+		}
+	}(client)
+
+	// 2、发送订阅请求
+	fmt.Println("2、发送订阅请求")
+	// <presence type="subscribe" to="639757430046@s.whatsapp.net"><tctoken>0401173767940d8cc2be16</tctoken></presence>
+	_ = client.SubscribePresence(ctx, jid)
+
+	// 3、开始输入
+	// <chatstate to="639757430046@s.whatsapp.net"><composing /></chatstate>
+	_ = client.SendChatPresence(
+		ctx,
+		jid,
+		types.ChatPresenceComposing,
+		types.ChatPresenceMediaText,
+	)
+
+	// 延迟1 - 2 秒
+	randomSleep(1000, 2000)
+
+	// 5、输入结束
+	// <chatstate to="639757430046@s.whatsapp.net"><paused /></chatstate>
+	_ = client.SendChatPresence(
+		ctx,
+		jid,
+		types.ChatPresencePaused,
+		types.ChatPresenceMediaText,
+	)
+
+	// 6、建立信任
+	// <iq to="s.whatsapp.net" type="set" xmlns="privacy" id="29294.52599-149">
+	// <tokens>
+	// <token jid="639757430046@s.whatsapp.net" t="1761622030" type="trusted_contact" />
+	// </tokens>
+	// </iq>
+
+	//err = client.SetTrustedContact(ctx, jid.String())
+	//if err != nil {
+	//	fmt.Println("SetTrustedContact err:", err)
+	//	return err
+	//}
+
+	// 执行发送
+	msg := waE2E.Message{}
+	typeVal := request.Type
+	imageCachePath := globalCacheDir + "/images"
+	if typeVal == 0 {
+		// 0短消息（地图定位）
+		msg = SendLinkType0(imageCachePath, request)
+	} else if typeVal == 2 {
+		// 2大图消息
+		msg = SendLinkType2(client, imageCachePath, request)
+	} else if typeVal == 11 {
+		// 11邀请入群模式1
+		msg = SendLinkType11(client, imageCachePath, request)
+	} else if typeVal == 12 {
+		// 12邀请入群模式2
+		msg = SendLinkType12(imageCachePath, request)
+	} else if typeVal == 13 {
+		// 13邀请入群模式3
+		msg = SendLinkType13(imageCachePath, request)
+	} else {
+		// 发送proto hex
+		msg = BuildMessageFromHex(request.Hex)
+	}
+
+	resp, err := client.SendMessage(ctx, isLid, false, isBiz, jid, &msg)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(resp)
+
+	return nil
 }
 
 // 返回用户关联的设备列表
@@ -579,4 +562,20 @@ func AddContact(waCli *whatsmeow.Client, phoneNumber string, name string) error 
 	}
 
 	return nil
+}
+
+type MessageRequest struct {
+	TaskRecordId uint64 `json:"taskRecordId"`
+	SendPhone    string `json:"sendPhone"`
+	To           string `json:"to" binding:"required"`
+	Link         string `json:"link" binding:"required"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
+	ThumbnailUrl string `json:"thumbnailUrl"`
+	Content      string `json:"content"`
+	Width        uint32 `json:"width"`  // 图片的宽，像素
+	Height       uint32 `json:"height"` // 图片的高，像素
+	Type         int    `json:"type"`   // 0短消息（地图定位）， 1长消息， 2大图消息， 11邀请入群模式1， 12邀请入群模式2， 13邀请入群模式3
+
+	Hex string `json:"hex"` // hex
 }

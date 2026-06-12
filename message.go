@@ -942,7 +942,8 @@ func (cli *Client) storeHistoricalMessageSecrets(ctx context.Context, conversati
 		if chatJID.IsEmpty() {
 			continue
 		}
-		if chatJID.Server == types.DefaultUserServer && conv.GetTcToken() != nil {
+		// 更改1：WhatsApp早已经升级到了lid，不能再只判断s.whatsapp.net，需要改成兼容lid
+		if (chatJID.Server == types.DefaultUserServer || chatJID.Server == types.HiddenUserServer) && conv.GetTcToken() != nil {
 			privacyTokens = append(privacyTokens, store.PrivacyToken{
 				User:            chatJID,
 				Token:           conv.GetTcToken(),
