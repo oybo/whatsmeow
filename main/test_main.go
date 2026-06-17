@@ -41,8 +41,8 @@ func main() {
 	// HTTP API
 	http.HandleFunc("/login", pairLoginHandler)
 	http.HandleFunc("/sendMessage", sendMessageHandler)
-	http.HandleFunc("/devices", getDevicesHandler)
 	http.HandleFunc("/addContact", addContactHandler)
+	http.HandleFunc("/devices", getDevicesHandler)
 
 	fmt.Println("🚀 HTTP API 服务启动，监听 :9090")
 	go http.ListenAndServe(":9090", nil)
@@ -356,7 +356,7 @@ func SendMessage(isLid bool, isBiz bool, jsonStr string) error {
 	//err = client.SetTrustedContact(ctx, jid.String())
 	//if err != nil {
 	//	fmt.Println("SetTrustedContact err:", err)
-	//	return err
+	//	//return err
 	//}
 
 	// 执行发送
@@ -395,47 +395,51 @@ func SendMessage(isLid bool, isBiz bool, jsonStr string) error {
 
 // 返回用户关联的设备列表
 func getDevicesHandler(w http.ResponseWriter, r *http.Request) {
-	// 获取当前联系人数量
-	contacts, err := client.Store.Contacts.GetAllContacts(ctx)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("联系人数量:", len(contacts))
-	for jid, contact := range contacts {
-		fmt.Println(
-			jid.String(),
-			contact.FullName,
-			contact.PushName,
-		)
-	}
 
-	// --
 	type Req struct {
+		PHONE   string   `json:"phone"`
 		Numbers []string `json:"numbers"`
 	}
-	// 获取当前关联的设备
 	var req Req
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
 
+	result := GetDevices(req.PHONE, req.Numbers)
+
+	var obj interface{}
+
+	err := json.Unmarshal([]byte(result), &obj)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	// 返回 JSON
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(obj)
+}
+
+func GetDevices(phone string, numbers []string) string {
+	ctx := context.Background()
+
 	var batch []types.JID
-	for _, number := range req.Numbers {
+	for _, number := range numbers {
 		jid, _ := types.ParseJID(number + "@s.whatsapp.net")
 		batch = append(batch, jid)
 	}
+
+	// --查询目标用户绑定设备数
 
 	devices, err := client.GetUserDevicesContext(ctx, batch)
 	if err != nil {
 		log.Fatalf("get devices error: %v", err)
 	}
 
-	//devices=[923485507679@s.whatsapp.net 923222051194@s.whatsapp.net 923222051194:28@s.whatsapp.net 923222051194:29@s.whatsapp.net 923222051194:31@s.whatsapp.net]
-
 	// 初始化结果 map
 	result := make(map[string]int)
-	for _, num := range req.Numbers {
+	for _, num := range numbers {
 		result[num] = 0
 	}
 	// 统计
@@ -450,11 +454,8 @@ func getDevicesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// 转成 json
 	data, _ := json.MarshalIndent(result, "", "  ")
-	fmt.Println("用户的设备列表:" + string(data))
 
-	// 返回 JSON
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	return string(data)
 }
 
 // 生成指定范围内的随机延迟
@@ -477,7 +478,8 @@ func randomSleep(minMs, maxMs int) {
 
 func addContactHandler(w http.ResponseWriter, r *http.Request) {
 	type Req struct {
-		PhoneNumber string `json:"phoneNumber"`
+		PHONE   string   `json:"phone"`
+		NUMBERS []string `json:"numbers"`
 	}
 	var req Req
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -485,11 +487,10 @@ func addContactHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	phoneNumber := req.PhoneNumber
-
-	err := AddContact(client, phoneNumber, "name_"+phoneNumber)
+	err := AddContacts(req.PHONE, req.NUMBERS)
 	if err != nil {
-		http.Error(w, "failed to add contact: "+err.Error(), 500)
+		http.Error(w, err.Error(), 400)
+		return
 	}
 
 	// 返回成功
@@ -504,64 +505,59 @@ func addContactHandler(w http.ResponseWriter, r *http.Request) {
 /*
 添加为联系人
 */
-func AddContact(waCli *whatsmeow.Client, phoneNumber string, name string) error {
+func AddContacts(phone string, numbers []string) error {
+	// 添加联系人
 	ctx := context.Background()
 
-	// PN JID
-	pnJID := types.NewJID(phoneNumber, types.DefaultUserServer)
-
-	// 查询号码是否存在
-	infoMap, err := waCli.GetUserInfo(ctx, []types.JID{pnJID})
+	// --查询去除未注册的号码
+	devices, err := client.IsOnWhatsApp(ctx, numbers)
 	if err != nil {
-		return fmt.Errorf("get user info failed: %w", err)
+		return err
 	}
 
-	if len(infoMap) == 0 {
-		return fmt.Errorf("user not found")
-	}
+	mutations := make([]appstate.MutationInfo, 0, len(devices))
 
-	// 获取 LID
-	lidJID, err := waCli.Store.LIDs.GetLIDForPN(ctx, pnJID)
-	if err != nil {
-		return fmt.Errorf("get lid failed: %w", err)
-	}
+	for _, device := range devices {
+		// 判断获取lid
+		lid, _ := client.Store.LIDs.GetLIDForPN(ctx, device.JID)
+		if lid.User == "" {
+			// 需要获取信息
+			info, _ := client.GetUserInfo(ctx, []types.JID{device.JID})
+			if info != nil {
+				lid, _ = client.Store.LIDs.GetLIDForPN(ctx, device.JID)
+			}
+			// 最好还是随机延迟一下
+			randomMilliseconds(1000, 2000)
+		}
 
-	if lidJID.IsEmpty() {
-		return fmt.Errorf("empty lid jid")
-	}
-
-	// 构造 patch
-	patch := appstate.PatchInfo{
-		Type: appstate.WAPatchCriticalUnblockLow,
-		Mutations: []appstate.MutationInfo{
-			{
-				Index: []string{
-					appstate.IndexContact,
-					phoneNumber,
-					"1",
-				},
-
-				Value: &waSyncAction.SyncActionValue{
-					ContactAction: &waSyncAction.ContactAction{
-						FullName: proto.String(name),
-						// 这里别写反
-						PnJID:  proto.String(pnJID.String()),
-						LidJID: proto.String(lidJID.String()),
-						// 是否保存到手机通讯录
-						SaveOnPrimaryAddressbook: proto.Bool(true),
-					},
+		mutation := appstate.MutationInfo{
+			// 加上这个"1" 不会同步到目标的手机上
+			//Index: []string{appstate.IndexContact, device.JID.String(), "1"},
+			Index: []string{appstate.IndexContact, device.JID.String()},
+			Value: &waSyncAction.SyncActionValue{
+				ContactAction: &waSyncAction.ContactAction{
+					FullName: proto.String(device.JID.User),
+					LidJID:   proto.String(lid.String()),
+					PnJID:    proto.String(device.JID.String()),
+					// 保存到主通讯录
+					SaveOnPrimaryAddressbook: proto.Bool(true),
 				},
 			},
-		},
+		}
+
+		mutations = append(mutations, mutation)
 	}
 
-	// 提交 patch
-	err = waCli.SendAppState(ctx, patch)
-	if err != nil {
-		return fmt.Errorf("send appstate failed: %w", err)
+	patch := appstate.PatchInfo{
+		Type:      appstate.WAPatchCriticalUnblockLow,
+		Mutations: mutations,
 	}
 
-	return nil
+	// 发送 patch 到服务器
+	err = client.SendAppState(ctx, patch)
+
+	return err
+
 }
 
 type MessageRequest struct {

@@ -124,12 +124,9 @@ var BaseClientPayload = &waWa6.ClientPayload{
 var DeviceProps = &waCompanionReg.DeviceProps{
 	Os: proto.String("Windows"),
 	Version: &waCompanionReg.DeviceProps_AppVersion{
-		//Primary:   proto.Uint32(0),
+		Primary: proto.Uint32(10),
 		//Secondary: proto.Uint32(1),
 		//Tertiary:  proto.Uint32(0),
-		Primary:   proto.Uint32(10),
-		Secondary: proto.Uint32(0),
-		Tertiary:  proto.Uint32(0),
 	},
 	HistorySyncConfig: &waCompanionReg.DeviceProps_HistorySyncConfig{
 		//FullSyncDaysLimit:                        nil,
@@ -195,7 +192,9 @@ var DeviceProps = &waCompanionReg.DeviceProps{
 		// 22
 		SupportHatchHistory: proto.Bool(true),
 	},
-	PlatformType:    waCompanionReg.DeviceProps_CHROME.Enum(),
+	//PlatformType:    waCompanionReg.DeviceProps_CHROME.Enum(),
+	// 改成桌面版
+	PlatformType:    waCompanionReg.DeviceProps_UWP.Enum(),
 	RequireFullSync: proto.Bool(false),
 }
 

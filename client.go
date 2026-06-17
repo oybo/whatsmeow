@@ -9,6 +9,7 @@ package whatsmeow
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -542,7 +543,14 @@ func (cli *Client) unlockedConnect(ctx context.Context) error {
 	if cli.Store.ID == nil {
 		client = cli.preLoginHTTP
 	}
-	fs := socket.NewFrameSocket(cli.Log.Sub("Socket"), client)
+
+	// 在url的后面拼接routing_info
+	routing_info := cli.Store.RoutingInfo
+	if routing_info != "" {
+		routing_info = "?ED=" + routing_info
+	}
+
+	fs := socket.NewFrameSocket(cli.Log.Sub("Socket"), client, routing_info)
 	if cli.MessengerConfig != nil {
 		fs.URL = cli.MessengerConfig.WebsocketURL
 		fs.HTTPHeaders.Set("Origin", cli.MessengerConfig.BaseURL)
@@ -556,7 +564,7 @@ func (cli *Client) unlockedConnect(ctx context.Context) error {
 	if err := fs.Connect(ctx); err != nil {
 		fs.Close(0)
 		return err
-	} else if err = cli.doHandshake(ctx, fs, *keys.NewKeyPair()); err != nil {
+	} else if err = cli.doConnectHandshake(ctx, fs, *keys.NewKeyPair()); err != nil {
 		fs.Close(0)
 		return fmt.Errorf("noise handshake failed: %w", err)
 	}
@@ -910,6 +918,28 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 
 					}()
 				}
+			}
+		}
+
+		// 在这里做存储routing_info
+		if node.Tag == "ib" {
+			for _, child := range node.GetChildren() {
+				if child.Tag != "edge_routing" {
+					continue
+				}
+				routingNode, ok := child.GetOptionalChildByTag("routing_info")
+				if !ok {
+					continue
+				}
+				data, ok := routingNode.Content.([]byte)
+				if !ok {
+					fmt.Printf("unexpected type: %T\n", routingNode.Content)
+					continue
+				}
+				b64 := base64.StdEncoding.EncodeToString(data)
+				// 保存
+				_ = cli.Store.Container.PutRoutingInfo(ctx, b64)
+				break
 			}
 		}
 

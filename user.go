@@ -216,10 +216,12 @@ func (cli *Client) IsOnWhatsApp(ctx context.Context, phones []string) ([]types.I
 			mappings = append(mappings, store.LIDMapping{PN: info.JID, LID: info.LID})
 		}
 
-		err = cli.Store.LIDs.PutManyLIDMappings(ctx, mappings)
-		if err != nil {
-			// not worth returning on the error, instead just post a log
-			cli.Log.Errorf("Failed to place LID mappings from USync call")
+		if len(mappings) > 0 {
+			err = cli.Store.LIDs.PutManyLIDMappings(ctx, mappings)
+			if err != nil {
+				// not worth returning on the error, instead just post a log
+				cli.Log.Errorf("Failed to place LID mappings from USync call")
+			}
 		}
 
 	}

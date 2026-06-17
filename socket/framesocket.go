@@ -7,7 +7,9 @@
 package socket
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -44,13 +46,13 @@ type FrameSocket struct {
 	partialHeader  []byte
 }
 
-func NewFrameSocket(log waLog.Logger, client *http.Client) *FrameSocket {
+func NewFrameSocket(log waLog.Logger, client *http.Client, routingInfo string) *FrameSocket {
 	return &FrameSocket{
 		log:    log,
 		Header: WAConnHeader,
 		Frames: make(chan []byte),
 
-		URL:         URL,
+		URL:         URL + routingInfo,
 		HTTPHeaders: http.Header{"Origin": {Origin}},
 		HTTPClient:  client,
 	}
@@ -123,6 +125,7 @@ func (fs *FrameSocket) SendFrame(data []byte) error {
 	if conn == nil {
 		return ErrSocketClosed
 	}
+
 	dataLength := len(data)
 	if dataLength >= FrameMaxSize {
 		return fmt.Errorf("%w (got %d bytes, max %d bytes)", ErrFrameTooLarge, len(data), FrameMaxSize)
@@ -147,7 +150,52 @@ func (fs *FrameSocket) SendFrame(data []byte) error {
 	// Copy actual frame data
 	copy(wholeFrame[headerLength+FrameLengthSize:], data)
 
+	// 打印传输data
+	fmt.Printf(
+		"\n========== SEND FRAME (%d bytes) ==========\n%s\n",
+		len(wholeFrame),
+		hex.Dump(wholeFrame),
+	)
+
 	return conn.Write(fs.cancelCtx, websocket.MessageBinary, wholeFrame)
+}
+
+func (fs *FrameSocket) SendFrameOrigin(data []byte) error {
+	conn := fs.conn.Load()
+	if conn == nil {
+		return ErrSocketClosed
+	}
+
+	// 打印传输data
+	fmt.Printf(
+		"\n========== SEND FRAME (%d bytes) ==========\n%s\n",
+		len(data),
+		hex.Dump(data),
+	)
+
+	return conn.Write(fs.cancelCtx, websocket.MessageBinary, data)
+}
+
+func (fs *FrameSocket) EncodeRoutingInfo(data []byte) []byte {
+	var buf bytes.Buffer
+
+	// 写入 "ED"
+	buf.WriteByte('E')
+	buf.WriteByte('D')
+	buf.WriteByte(0)
+	buf.WriteByte(1)
+
+	length := len(data)
+
+	// uint24 大端
+	buf.WriteByte(byte(length >> 16))
+	buf.WriteByte(byte(length >> 8))
+	buf.WriteByte(byte(length))
+
+	// payload
+	buf.Write(data)
+
+	return buf.Bytes()
 }
 
 func (fs *FrameSocket) frameComplete() {

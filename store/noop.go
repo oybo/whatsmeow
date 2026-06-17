@@ -253,6 +253,14 @@ func (n *NoopStore) DeleteDevice(ctx context.Context, store *Device) error {
 	return n.Error
 }
 
+func (n *NoopStore) PutRoutingInfo(ctx context.Context, routingInfo string) error {
+	return n.Error
+}
+
+func (n *NoopStore) PutServerStaticInfo(ctx context.Context, pub [32]byte, cert []byte, exp time.Time) error {
+	return n.Error
+}
+
 func (n *NoopStore) GetBufferedEvent(ctx context.Context, ciphertextHash [32]byte) (*BufferedEvent, error) {
 	return nil, nil
 }

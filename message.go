@@ -949,7 +949,7 @@ func (cli *Client) storeHistoricalMessageSecrets(ctx context.Context, conversati
 		if chatJID.IsEmpty() {
 			continue
 		}
-		// 更改：WhatsApp早已经升级到了lid，不能再只判断s.whatsapp.net，需要改成兼容lid
+		// 更改：WhatsApp早已经升级到了lid，不能再只判断s.whatsapp.net，需要改成兼容lid，这里的做法是兼容whatsmeow的体系，按jid来存储
 		var chatPN types.JID
 		if chatJID.Server == types.DefaultUserServer {
 			chatPN = chatJID

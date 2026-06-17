@@ -121,6 +121,8 @@ type ChatSettingsStore interface {
 type DeviceContainer interface {
 	PutDevice(ctx context.Context, store *Device) error
 	DeleteDevice(ctx context.Context, store *Device) error
+	PutRoutingInfo(ctx context.Context, routingInfo string) error
+	PutServerStaticInfo(ctx context.Context, pub [32]byte, cert []byte, exp time.Time) error
 }
 
 type MessageSecretInsert struct {
@@ -232,6 +234,11 @@ type Device struct {
 	PushName     string
 
 	LIDMigrationTimestamp int64
+
+	RoutingInfo      string    // 新增：保存routingInfo
+	ServerStaticKey  [32]byte  // 新增：保存解密后的服务端公钥
+	CertificateChain []byte    // 新增：保存解密后的原始证书链
+	ServerKeyExp     time.Time // 新增：保存证书过期时间
 
 	FacebookUUID uuid.UUID
 
