@@ -41,8 +41,10 @@ func main() {
 	// HTTP API
 	http.HandleFunc("/login", pairLoginHandler)
 	http.HandleFunc("/sendMessage", sendMessageHandler)
-	http.HandleFunc("/addContact", addContactHandler)
 	http.HandleFunc("/devices", getDevicesHandler)
+	http.HandleFunc("/addContact", addContactHandler)
+	http.HandleFunc("/getAllContact", getAllContactHandler)
+	http.HandleFunc("/setNickNameAndPicture", setNickNameAndPicture)
 
 	fmt.Println("🚀 HTTP API 服务启动，监听 :9090")
 	go http.ListenAndServe(":9090", nil)
@@ -71,9 +73,19 @@ func pairLoginHandler(w http.ResponseWriter, r *http.Request) {
 	// 如果要新扫码账户登录，改个数据库名就行
 	var userDbName = globalCacheDir + "/db/" + "whatsmeow_" + req.PHONE + ".db"
 	// 创建 SQLite 数据库存储
-	// 改为 "sqlite"
-	//container, err := sqlstore.New(ctx, "sqlite3", "file:"+userDbName+"?_foreign_keys=on", dbLog)
-	container, err := sqlstore.New(ctx, "sqlite", "file:"+userDbName+"?_pragma=foreign_keys(1)", dbLog)
+	/*
+		container, err := sqlstore.New(ctx, "sqlite3", "file:"+userDbName+"?_foreign_keys=on", dbLog)
+		改为 "sqlite"
+	*/
+
+	// 数据库优化：在连接字符串中加入 WAL 模式和忙等待超时参数
+	// _pragma=journal_mode(WAL) -> 开启预写日志模式，读写互不阻塞
+	// _pragma=synchronous(NORMAL) -> 配合 WAL 模式，提升写入性能并确保安全
+	// _busy_timeout=5000 -> 遭遇锁定时自动等待 5000 毫秒（5秒）再重试，不立刻报错
+	dsn := "file:" + userDbName + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_busy_timeout=5000"
+
+	// 创建 SQLite 数据库存储
+	container, err := sqlstore.New(ctx, "sqlite", dsn, dbLog)
 	if err != nil {
 		panic(err)
 	}
@@ -98,6 +110,11 @@ func pairLoginHandler(w http.ResponseWriter, r *http.Request) {
 		switch v := evt.(type) {
 		case *events.Connected:
 			fmt.Println("✅ 已连接 WhatsApp")
+
+			// 查询ws认为我所在的地区
+			resNode, _ := client.SendIQGetCountryCode()
+			fmt.Println("SendIQGetCountryCode=", resNode)
+
 		case *events.Disconnected:
 			// 断开连接了，需要考虑重连
 			fmt.Println("===Disconnected")
@@ -346,19 +363,6 @@ func SendMessage(isLid bool, isBiz bool, jsonStr string) error {
 		types.ChatPresenceMediaText,
 	)
 
-	// 6、建立信任
-	// <iq to="s.whatsapp.net" type="set" xmlns="privacy" id="29294.52599-149">
-	// <tokens>
-	// <token jid="639757430046@s.whatsapp.net" t="1761622030" type="trusted_contact" />
-	// </tokens>
-	// </iq>
-
-	//err = client.SetTrustedContact(ctx, jid.String())
-	//if err != nil {
-	//	fmt.Println("SetTrustedContact err:", err)
-	//	//return err
-	//}
-
 	// 执行发送
 	msg := waE2E.Message{}
 	typeVal := request.Type
@@ -383,6 +387,7 @@ func SendMessage(isLid bool, isBiz bool, jsonStr string) error {
 		msg = BuildMessageFromHex(request.Hex)
 	}
 
+	client.SendReportingTokens = true
 	resp, err := client.SendMessage(ctx, isLid, false, isBiz, jid, &msg)
 	if err != nil {
 		return err
@@ -490,6 +495,15 @@ func addContactHandler(w http.ResponseWriter, r *http.Request) {
 	err := AddContacts(req.PHONE, req.NUMBERS)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
+
+		// 强刷一下
+		// 强制同步一下联系人
+		err = client.FetchAppState(ctx,
+			appstate.WAPatchCriticalUnblockLow,
+			true,
+			false,
+		)
+
 		return
 	}
 
@@ -531,15 +545,19 @@ func AddContacts(phone string, numbers []string) error {
 		}
 
 		mutation := appstate.MutationInfo{
-			// 加上这个"1" 不会同步到目标的手机上
+			// 加上这个"1" 不会同步到挂机账号的手机上
 			//Index: []string{appstate.IndexContact, device.JID.String(), "1"},
 			Index: []string{appstate.IndexContact, device.JID.String()},
 			Value: &waSyncAction.SyncActionValue{
+				Timestamp: proto.Int64(time.Now().UnixMilli()),
 				ContactAction: &waSyncAction.ContactAction{
+					// 1
 					FullName: proto.String(device.JID.User),
-					LidJID:   proto.String(lid.String()),
-					PnJID:    proto.String(device.JID.String()),
-					// 保存到主通讯录
+					// 3
+					LidJID: proto.String(lid.String()),
+					// 5
+					PnJID: proto.String(device.JID.String()),
+					// 4 保存到主通讯录
 					SaveOnPrimaryAddressbook: proto.Bool(true),
 				},
 			},
@@ -574,4 +592,110 @@ type MessageRequest struct {
 	Type         int    `json:"type"`   // 0短消息（地图定位）， 1长消息， 2大图消息， 11邀请入群模式1， 12邀请入群模式2， 13邀请入群模式3
 
 	Hex string `json:"hex"` // hex
+}
+
+// 获取所有联系人
+func getAllContactHandler(w http.ResponseWriter, r *http.Request) {
+	type Req struct {
+		PHONE string `json:"phone"`
+	}
+	var req Req
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	result := getContacts(req.PHONE)
+
+	// 返回成功
+	response := map[string]string{
+		"status": "ok",
+		"result": result,
+		"time":   time.Now().Format("2006-01-02 15:04:05"),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func getContacts(phone string) string {
+	// 获取联系人
+	ctx := context.Background()
+
+	contacts, err := client.Store.Contacts.GetAllContacts(ctx)
+
+	if err != nil {
+		fmt.Println("获取联系人失败:", err)
+		return ""
+	}
+
+	fmt.Printf("总联系人数量: %d\n\n", len(contacts))
+
+	// 通讯录联系人数量
+	realContactCount := 0
+
+	// 通讯录联系人数量
+	result := make(map[string]types.ContactInfo)
+	for jid, info := range contacts {
+		// 只判断 FullName 有值的联系人，FullName有值才是真正通讯录好友
+		if info.FullName == "" {
+			continue
+		}
+
+		fmt.Println("===================================")
+		fmt.Println("JID         :", jid.String())
+		fmt.Println("PushName    :", info.PushName)
+		fmt.Println("FullName    :", info.FullName)
+		fmt.Println("FirstName   :", info.FirstName)
+		fmt.Println("BusinessName:", info.BusinessName)
+		fmt.Println("FoundName   :", info.Found)
+		fmt.Println("")
+
+		fmt.Printf("详细信息: %+v\n", info)
+		fmt.Println("===================================")
+
+		realContactCount++
+		result[jid.String()] = info
+	}
+
+	// 输出通讯录联系人数量
+	fmt.Printf("\n通讯录联系人数量: %d\n", realContactCount)
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		return ""
+	}
+
+	return string(data)
+}
+
+// 设置昵称和头像
+func setNickNameAndPicture(w http.ResponseWriter, r *http.Request) {
+	type Req struct {
+		JID      string `json:"jid"`
+		NickName string `json:"nickName"`
+		Picture  string `json:"picture"`
+	}
+	var req Req
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	// 设置昵称
+	// <presence name="TankPanda" />
+
+	picture, _ := hex.DecodeString(req.Picture)
+	err := client.SetPicture(ctx, picture)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	// 返回成功
+	response := map[string]string{
+		"status": "ok",
+		"time":   time.Now().Format("2006-01-02 15:04:05"),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }

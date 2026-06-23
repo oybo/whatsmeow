@@ -484,6 +484,8 @@ func (cli *Client) GetUserDevices(ctx context.Context, jids []types.JID) ([]type
 	var devices, jidsToSync, fbJIDsToSync []types.JID
 	for _, jid := range jids {
 		cached, ok := cli.userDevicesCache[jid]
+		// 这里不使用缓存，防止设备同步异常或者延迟的时候加密发送消息，导致解析失败。
+		ok = false
 		if ok && len(cached.devices) > 0 {
 			devices = append(devices, cached.devices...)
 		} else if jid.Server == types.MessengerServer {

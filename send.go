@@ -274,7 +274,7 @@ func (cli *Client) SendMessage(ctx context.Context, isLid bool, notToMe bool, is
 				},
 			}
 
-			messagePlaintext, _, marshalErr := marshalMessage(req.InlineBotJID, botMessage)
+			messagePlaintext, _, marshalErr := cli.marshalMessage(req.InlineBotJID, botMessage)
 			if marshalErr != nil {
 				err = marshalErr
 				return
@@ -705,7 +705,7 @@ func (cli *Client) sendNewsletter(
 		message = nil
 	}
 	start := time.Now()
-	plaintext, _, err := marshalMessage(to, message)
+	plaintext, _, err := cli.marshalMessage(to, message)
 	timings.Marshal = time.Since(start)
 	if err != nil {
 		return nil, err
@@ -753,7 +753,7 @@ func (cli *Client) sendGroup(
 	isBiz bool,
 ) (string, []byte, error) {
 	start := time.Now()
-	plaintext, _, err := marshalMessage(to, message)
+	plaintext, _, err := cli.marshalMessage(to, message)
 	timings.Marshal = time.Since(start)
 	if err != nil {
 		return "", nil, err
@@ -848,7 +848,8 @@ func (cli *Client) sendDM(
 	isBiz bool, // 是否携带biz标签
 ) (string, []byte, error) {
 	start := time.Now()
-	messagePlaintext, deviceSentMessagePlaintext, err := marshalMessage(to, message)
+	// 序列化msg proto 转成二进制字节流
+	messagePlaintext, deviceSentMessagePlaintext, err := cli.marshalMessage(to, message)
 	timings.Marshal = time.Since(start)
 	if err != nil {
 		return "", nil, err
@@ -1224,8 +1225,7 @@ func (cli *Client) prepareMessageNode(
 		return nil, nil, fmt.Errorf("failed to get device list: %w", err)
 	}
 
-	if to.Server == types.DefaultUserServer ||
-		to.Server == types.HiddenUserServer {
+	if to.Server == types.DefaultUserServer || to.Server == types.HiddenUserServer {
 		if !isAllParticipantsInAllDevices(participants, allDevices) {
 			cli.Log.Warnf("NotAllParticipantsInAllDevices")
 			return nil, nil, fmt.Errorf("NotAllParticipantsInAllDevices")
@@ -1249,6 +1249,13 @@ func (cli *Client) prepareMessageNode(
 		"type": msgType,
 		"to":   to,
 	}
+
+	if to.Server == types.HiddenUserServer {
+		// 如果to是lid，则添加peer_recipient_pn属性
+		// <message id="3EB018F88CA7D4EB523A70" to="229021178703950@lid" type="media" peer_recipient_pn="8618824585020@s.whatsapp.net">
+		attrs["peer_recipient_pn"], _ = cli.Store.GetAltJID(ctx, to)
+	}
+
 	// TODO this is a very hacky hack for announcement group messages, why is it pn anyway?
 	if extraParams.addressingMode != "" {
 		attrs["addressing_mode"] = string(extraParams.addressingMode)
@@ -1262,6 +1269,7 @@ func (cli *Client) prepareMessageNode(
 	}
 
 	start = time.Now()
+	// 对所有设备进行Signal 端到端加密
 	participantNodes, includeIdentity, err := cli.encryptMessageForDevices(
 		ctx, allDevices, id, plaintext, dsmPlaintext, encAttrs,
 	)
@@ -1282,7 +1290,7 @@ func (cli *Client) prepareMessageNode(
 	}, allDevices, nil
 }
 
-func marshalMessage(to types.JID, message *waE2E.Message) (plaintext, dsmPlaintext []byte, err error) {
+func (cli *Client) marshalMessage(to types.JID, message *waE2E.Message) (plaintext, dsmPlaintext []byte, err error) {
 	if message == nil && to.Server == types.NewsletterServer {
 		return
 	}
@@ -1300,6 +1308,8 @@ func marshalMessage(to types.JID, message *waE2E.Message) (plaintext, dsmPlainte
 			},
 			MessageContextInfo: message.MessageContextInfo,
 		})
+		// 打印发送的msg proto
+		fmt.Println("msg proto:", hex.EncodeToString(dsmPlaintext))
 		if err != nil {
 			err = fmt.Errorf("failed to marshal message (for own devices): %w", err)
 			return
@@ -1338,6 +1348,7 @@ func (cli *Client) encryptMessageForDevices(
 			pnDevices = append(pnDevices, jid)
 		}
 	}
+	// 根据上面的pn_jid，先去数据库中查找对应关系的lid
 	lidMappings, err := cli.Store.LIDs.GetManyLIDsForPNs(ctx, pnDevices)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to fetch LID mappings: %w", err)
@@ -1348,12 +1359,14 @@ func (cli *Client) encryptMessageForDevices(
 	sessionAddresses := make([]string, 0, len(allDevices))
 	for _, jid := range allDevices {
 		if jid == ownJID || jid == ownLID {
+			// 跳过当前发送者自己设备
 			continue
 		}
 		encryptionIdentity := jid
 		if jid.Server == types.DefaultUserServer {
 			// TODO query LID from server for missing entries
 			if lidForPN, ok := lidMappings[jid]; ok && !lidForPN.IsEmpty() {
+				// 迁移密钥 Session 到 LID
 				cli.migrateSessionStore(ctx, jid, lidForPN)
 				encryptionIdentity = lidForPN
 			}
@@ -1364,6 +1377,7 @@ func (cli *Client) encryptMessageForDevices(
 		sessionAddressToJID[addr] = jid
 	}
 
+	// 查询本地是否存在过会话
 	existingSessions, ctx, err := cli.Store.WithCachedSessions(ctx, sessionAddresses)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to prefetch sessions: %w", err)
@@ -1374,8 +1388,13 @@ func (cli *Client) encryptMessageForDevices(
 			retryDevices = append(retryDevices, sessionAddressToJID[addr])
 		}
 	}
+
+	// 端到端加密需要本地与每个设备都有一个加密会话（Session）。
+	// 1、先去本地数据库批量加载已有的会话缓存（WithCachedSessions）
+	// 如果发现本地数据库里没有某个设备的会话记录（!exists），说明是第一次给这个设备发消息。代码会将这些设备挑出来，调用 fetchPreKeysNoError 向 WhatsApp 服务器请求对方的 PreKey 密钥包（Bundle）。
 	bundles := cli.fetchPreKeysNoError(ctx, retryDevices)
 
+	// 遍历设备，逐个加密
 	for _, jid := range allDevices {
 		plaintext := msgPlaintext
 		if jid == ownJID || jid == ownLID {

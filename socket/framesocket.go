@@ -9,7 +9,6 @@ package socket
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -150,12 +149,12 @@ func (fs *FrameSocket) SendFrame(data []byte) error {
 	// Copy actual frame data
 	copy(wholeFrame[headerLength+FrameLengthSize:], data)
 
-	// 打印传输data
-	fmt.Printf(
-		"\n========== SEND FRAME (%d bytes) ==========\n%s\n",
-		len(wholeFrame),
-		hex.Dump(wholeFrame),
-	)
+	//// 打印传输data
+	//fmt.Printf(
+	//	"\n========== SEND FRAME (%d bytes) ==========\n%s\n",
+	//	len(wholeFrame),
+	//	hex.Dump(wholeFrame),
+	//)
 
 	return conn.Write(fs.cancelCtx, websocket.MessageBinary, wholeFrame)
 }
@@ -166,12 +165,12 @@ func (fs *FrameSocket) SendFrameOrigin(data []byte) error {
 		return ErrSocketClosed
 	}
 
-	// 打印传输data
-	fmt.Printf(
-		"\n========== SEND FRAME (%d bytes) ==========\n%s\n",
-		len(data),
-		hex.Dump(data),
-	)
+	//// 打印传输data
+	//fmt.Printf(
+	//	"\n========== SEND FRAME (%d bytes) ==========\n%s\n",
+	//	len(data),
+	//	hex.Dump(data),
+	//)
 
 	return conn.Write(fs.cancelCtx, websocket.MessageBinary, data)
 }

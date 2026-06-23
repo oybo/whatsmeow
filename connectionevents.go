@@ -201,10 +201,16 @@ func (cli *Client) handleConnectSuccess(ctx context.Context, node *waBinary.Node
 				cli.Log.Debugf("Prekey count after upload: %d", sc)
 			}
 		}
+
+		//if cli.Store.RoutingInfo == "" {
+		// 这里和登录那的payload保持同步，那里如果为false了，则不需要再发这个
+		// 这个的意思应该是告诉服务器，我现在准备好了，已经在线了，可以给我正常消息同步了
 		err := cli.SetPassive(ctx, false)
 		if err != nil {
 			cli.Log.Warnf("Failed to send post-connect passive IQ: %v", err)
 		}
+		//}
+
 		cli.dispatchEvent(&events.Connected{})
 		cli.closeSocketWaitChan()
 	}()

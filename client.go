@@ -897,12 +897,12 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 						},
 					})
 
-					// 2、发送订阅请求
-					_ = cli.SubscribePresence(ctx, jid)
-
 					go func() {
 						// 延迟1 - 2 秒
-						randomSleep(1000, 2000)
+						randomSleep(30000, 60000)
+
+						// 2、发送订阅请求
+						_ = cli.SubscribePresence(ctx, jid)
 
 						// 发送已阅读
 						//<receipt to="69080975409156@lid" type="read" id="ACB2E07F794D9C020A6970D892FEBEDC" t="1778819090297" sts="1778818703000509" />

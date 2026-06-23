@@ -5,7 +5,6 @@ import (
 	crand "crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"go.mau.fi/util/random"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waCommon"
@@ -58,14 +57,6 @@ func BuildLocalLinkMessage() *waE2E.Message {
 					Trigger:   waE2E.DisappearingMode_CHAT_SETTING.Enum(),
 				},
 			},
-		},
-		MessageContextInfo: &waE2E.MessageContextInfo{
-			//DeviceListMetadata: &waE2E.DeviceListMetadata{
-			//	SenderKeyHash:   random.Bytes(10),
-			//	SenderTimestamp: proto.Uint64(uint64(time.Now().Unix())),
-			//},
-			//DeviceListMetadataVersion: proto.Int32(2),
-			MessageSecret: random.Bytes(32),
 		},
 	}
 	return msg
@@ -160,10 +151,6 @@ func BuildBigImageMessage() *waE2E.Message {
 	var msg = &waE2E.Message{
 		ViewOnceMessage: &waE2E.FutureProofMessage{
 			Message: &waE2E.Message{
-				MessageContextInfo: &waE2E.MessageContextInfo{
-					DeviceListMetadata:        &waE2E.DeviceListMetadata{},
-					DeviceListMetadataVersion: proto.Int32(2),
-				},
 				InteractiveMessage: &waE2E.InteractiveMessage{
 					// 1
 					Header: &waE2E.InteractiveMessage_Header{
@@ -355,13 +342,6 @@ func BuildImageUrlMessage() *waE2E.Message {
 			// 34
 			LinkPreviewMetadata: &waE2E.LinkPreviewMetadata{},
 		},
-		MessageContextInfo: &waE2E.MessageContextInfo{
-			DeviceListMetadata: &waE2E.DeviceListMetadata{
-				SenderTimestamp: proto.Uint64(1773932983),
-			},
-			DeviceListMetadataVersion: proto.Int32(2),
-			MessageSecret:             random.Bytes(32),
-		},
 	}
 
 	data, err := proto.Marshal(msg)
@@ -414,14 +394,6 @@ func BuildTextUrlMessage() *waE2E.Message {
 				// 5
 				SocialMediaPostType: waE2E.LinkPreviewMetadata_NONE.Enum(),
 			},
-		},
-		// 35
-		MessageContextInfo: &waE2E.MessageContextInfo{
-			DeviceListMetadata: &waE2E.DeviceListMetadata{
-				SenderTimestamp: proto.Uint64(1773932983),
-			},
-			DeviceListMetadataVersion: proto.Int32(2),
-			MessageSecret:             random.Bytes(32),
 		},
 	}
 

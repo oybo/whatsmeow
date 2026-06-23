@@ -74,6 +74,7 @@ func (device *Device) WithCachedSessions(ctx context.Context, addresses []string
 		return nil, ctx, nil
 	}
 
+	// 本地查找是否有创建过会话
 	sessions, err := device.Sessions.GetManySessions(ctx, addresses)
 	if err != nil {
 		return nil, ctx, fmt.Errorf("failed to prefetch sessions: %w", err)
@@ -84,8 +85,10 @@ func (device *Device) WithCachedSessions(ctx context.Context, addresses []string
 		var sessionRecord *record.Session
 		var found bool
 		if rawSess == nil {
+			// 情况 A：没有找到原始数据，创建一个全新的空会话记录
 			sessionRecord = record.NewSession(SignalProtobufSerializer.Session, SignalProtobufSerializer.State)
 		} else {
+			// 情况 B：找到了原始数据，进行反序列化
 			found = true
 			sessionRecord, err = record.NewSessionFromBytes(rawSess, SignalProtobufSerializer.Session, SignalProtobufSerializer.State)
 			if err != nil {

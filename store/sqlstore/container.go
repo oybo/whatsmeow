@@ -11,7 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	mathRand "math/rand/v2"
+	math "math/rand"
 	"time"
 
 	"github.com/google/uuid"
@@ -289,7 +289,7 @@ func (c *Container) NewDevice() *store.Device {
 
 		NoiseKey:       keys.NewKeyPair(),
 		IdentityKey:    keys.NewKeyPair(),
-		RegistrationID: mathRand.Uint32(),
+		RegistrationID: uint32(math.Intn(9000) + 1000), // web端该值为随机生成4位数字
 		AdvSecretKey:   random.Bytes(32),
 	}
 	device.SignedPreKey = device.IdentityKey.CreateSignedPreKey(1)

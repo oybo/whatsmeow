@@ -76,7 +76,7 @@ func (int *DangerousInternalClient) FetchAppStatePatches(ctx context.Context, na
 }
 
 func (int *DangerousInternalClient) RequestMissingAppStateKeys(ctx context.Context, patches *appstate.PatchList) {
-	int.c.requestMissingAppStateKeys(ctx, patches)
+	int.c.requestMissingAppStateKeys(ctx, patches, false)
 }
 
 func (int *DangerousInternalClient) RequestAppStateKeys(ctx context.Context, rawKeyIDs [][]byte) {

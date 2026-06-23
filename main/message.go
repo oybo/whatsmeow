@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	crand "crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waAdv"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
+	"math/rand"
 	"strings"
 	"time"
 )
@@ -38,6 +41,9 @@ func SendLinkType0(cacheDir string, request MessageRequest) waE2E.Message {
 
 	fmt.Println("thumb size:", len(thumb))
 
+	// content添加一些随机表情
+	title = AddRandomEmojis(title, 1, 1)
+
 	return waE2E.Message{
 		LocationMessage: &waE2E.LocationMessage{
 			DegreesLatitude:  proto.Float64(0),
@@ -46,7 +52,7 @@ func SendLinkType0(cacheDir string, request MessageRequest) waE2E.Message {
 			URL:              proto.String(link),
 			Address:          proto.String(title),
 			JPEGThumbnail:    thumb,
-		},
+		}, MessageContextInfo: BuildMessageContextInfo(),
 	}
 }
 
@@ -78,6 +84,9 @@ func SendLinkType2(waCli *whatsmeow.Client, cacheDir string, request MessageRequ
 		Name:             proto.String("quick_reply"),
 		ButtonParamsJSON: proto.String(replyBtnJson),
 	}
+
+	// content添加一些随机表情
+	content = AddRandomEmojis(content, 1, 3)
 
 	// 默认空缩略图（关键点）
 	var thumb []byte
@@ -137,10 +146,6 @@ func SendLinkType2(waCli *whatsmeow.Client, cacheDir string, request MessageRequ
 	return waE2E.Message{
 		ViewOnceMessage: &waE2E.FutureProofMessage{
 			Message: &waE2E.Message{
-				MessageContextInfo: &waE2E.MessageContextInfo{
-					DeviceListMetadata:        &waE2E.DeviceListMetadata{},
-					DeviceListMetadataVersion: proto.Int32(2),
-				},
 				InteractiveMessage: &waE2E.InteractiveMessage{
 					// 1
 					Header: &waE2E.InteractiveMessage_Header{
@@ -464,12 +469,75 @@ func uploadMediaCache(WaCli *whatsmeow.Client, ctx context.Context, mediaType wh
 	return
 }
 
-type UploadResponseCopy struct {
-	URL        string `json:"url"`
-	DirectPath string `json:"direct_path"`
+var emojis = []string{
+	"😀", "😂", "🤣", "😊", "😍",
+	"🥰", "😘", "😎", "🤔", "🥳",
+	"🔥", "💯", "👍", "👏", "🎉",
+	"❤️", "✨", "🌟", "🚀", "🎈",
+}
 
-	MediaKey      []byte `json:"media_key"`
-	FileEncSHA256 []byte `json:"file_enc_sha256"`
-	FileSHA256    []byte `json:"file_sha256"`
-	FileLength    uint64 `json:"file_length"`
+func AddRandomEmojis(text string, minCount, maxCount int) string {
+	if len(text) == 0 {
+		return text
+	}
+
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	// 随机决定插入多少个表情
+	count := minCount
+	if maxCount > minCount {
+		count += r.Intn(maxCount - minCount + 1)
+	}
+
+	chars := strings.Split(text, "")
+
+	for i := 0; i < count; i++ {
+		emoji := emojis[r.Intn(len(emojis))]
+		pos := r.Intn(len(chars) + 1)
+
+		chars = append(chars[:pos],
+			append([]string{emoji}, chars[pos:]...)...)
+	}
+
+	return strings.Join(chars, "")
+}
+
+func BuildMessageContextInfo() *waE2E.MessageContextInfo {
+	var senderKeyHash []byte
+	var senderTimestamp uint64
+
+	senderKeyHash = nil
+	var details waAdv.ADVDeviceIdentity
+	if err := proto.Unmarshal(client.Store.Account.Details, &details); err == nil && details.Timestamp != nil {
+		senderTimestamp = *details.Timestamp
+	}
+	// 如果上述解析时间戳失败或为空，提供兜底时间戳
+	if senderTimestamp == 0 {
+		senderTimestamp = uint64(time.Now().Unix())
+	}
+
+	messageSecret := make([]byte, 32)
+	_, _ = crand.Reader.Read(messageSecret)
+
+	return &waE2E.MessageContextInfo{
+		// 1
+		DeviceListMetadata: &waE2E.DeviceListMetadata{
+			// 1
+			SenderKeyHash: senderKeyHash,
+			// 2
+			SenderTimestamp: proto.Uint64(senderTimestamp),
+			// 4
+			SenderAccountType: waAdv.ADVEncryptionType_E2EE.Enum(),
+			// 5
+			ReceiverAccountType: waAdv.ADVEncryptionType_E2EE.Enum(),
+			// 8
+			RecipientKeyHash: nil,
+			// 9
+			RecipientTimestamp: nil,
+		},
+		// 2
+		DeviceListMetadataVersion: proto.Int32(2),
+		// 3
+		MessageSecret: messageSecret,
+	}
 }

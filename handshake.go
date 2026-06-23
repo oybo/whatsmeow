@@ -48,7 +48,8 @@ func (cli *Client) doConnectHandshake(ctx context.Context, fs *socket.FrameSocke
 	if cli.shouldUseIKHandshake() {
 		fmt.Println("doIKHandshake")
 		// 这里第三个参数要传自己本地保存的Noise静态公私钥
-		err := cli.doIKHandshake(ctx, fs, *cli.Store.NoiseKey, cli.Store.ServerStaticKey)
+		//err := cli.doIKHandshake(ctx, fs, *cli.Store.NoiseKey, cli.Store.ServerStaticKey)
+		err := cli.doIKHandshake(ctx, fs, ephemeralKP, cli.Store.ServerStaticKey)
 		if err == nil {
 			// IK 模式恢复连接成功
 			fmt.Println("IK 模式恢复连接成功")
@@ -357,6 +358,7 @@ func (cli *Client) doIKHandshake(ctx context.Context, fs *socket.FrameSocket, ep
 		_, err = nh.Decrypt(serverPayloadCiphertext)
 		if err != nil {
 			cli.Log.Errorf("failed to decrypt server hello payload ciphertext: %w", err)
+			return err
 		}
 	}
 
