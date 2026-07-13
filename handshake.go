@@ -45,17 +45,21 @@ func (cli *Client) doConnectHandshake(ctx context.Context, fs *socket.FrameSocke
 		_ = fs.SendFrameOrigin(fs.EncodeRoutingInfo(encoded))
 	}
 
+	// 优先尝试 IK 模式握手
 	if cli.shouldUseIKHandshake() {
 		fmt.Println("doIKHandshake")
-		// 这里第三个参数要传自己本地保存的Noise静态公私钥
-		//err := cli.doIKHandshake(ctx, fs, *cli.Store.NoiseKey, cli.Store.ServerStaticKey)
+
+		// 传入本次连接随机生成的临时密钥对 ephemeralKP，本地静态密钥内部会自动读取
 		err := cli.doIKHandshake(ctx, fs, ephemeralKP, cli.Store.ServerStaticKey)
 		if err == nil {
-			// IK 模式恢复连接成功
 			fmt.Println("IK 模式恢复连接成功")
 			return nil
 		}
+
+		// 如果 IK 失败，直接返回错误，交由上层 unlockedConnect 触发网络重连和切换 XX 模式
+		return fmt.Errorf("IK handshake failed: %w", err)
 	}
+
 	fmt.Println("doXXHandshake")
 	return cli.doXXHandshake(ctx, fs, ephemeralKP)
 }
@@ -267,9 +271,11 @@ func (cli *Client) handleAndSaveServerCert(ctx context.Context, certDecrypted []
 	defer cancel()
 
 	// 将 公钥、完整的原始证书链字节、计算出的过期时间 一并存入数据库
-	errDb := cli.Store.Container.PutServerStaticInfo(dbCtx, serverStaticPub, certDecrypted, expiresAt)
-	if errDb != nil {
-		return fmt.Errorf("failed to save server static info to database: %w", errDb)
+	if cli.Store.ID != nil {
+		errDb := cli.Store.Container.PutServerStaticInfo(dbCtx, cli.Store.ID.User, serverStaticPub, certDecrypted, expiresAt)
+		if errDb != nil {
+			return fmt.Errorf("failed to save server static info to database: %w", errDb)
+		}
 	}
 	return nil
 }

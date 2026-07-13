@@ -13,8 +13,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"golang.org/x/sync/semaphore"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -30,6 +28,8 @@ import (
 	"go.mau.fi/util/ptr"
 	"go.mau.fi/util/random"
 	"golang.org/x/net/proxy"
+	"golang.org/x/sync/semaphore"
+	"math/rand"
 
 	"go.mau.fi/whatsmeow/appstate"
 	waBinary "go.mau.fi/whatsmeow/binary"
@@ -73,6 +73,7 @@ type Client struct {
 	socketWait chan struct{}
 
 	isLoggedIn            atomic.Bool
+	paired                atomic.Bool
 	expectedDisconnect    *exsync.Event
 	forceAutoReconnect    atomic.Bool
 	EnableAutoReconnect   bool
@@ -285,6 +286,7 @@ func NewClient(deviceStore *store.Device, log waLog.Logger) *Client {
 
 		BackgroundEventCtx: context.Background(),
 	}
+	cli.paired.Store(deviceStore.ID != nil)
 	cli.nodeHandlers = map[string]nodeHandler{
 		"message":      cli.handleEncryptedMessage,
 		"appdata":      cli.handleEncryptedMessage,
@@ -526,6 +528,21 @@ func (cli *Client) connect(ctx context.Context) error {
 	return cli.unlockedConnect(ctx)
 }
 
+func (cli *Client) newFrameSocket(client *http.Client, routing_info string) *socket.FrameSocket {
+	fs := socket.NewFrameSocket(cli.Log.Sub("Socket"), client, routing_info)
+	if cli.MessengerConfig != nil {
+		fs.URL = cli.MessengerConfig.WebsocketURL
+		fs.HTTPHeaders.Set("Origin", cli.MessengerConfig.BaseURL)
+		fs.HTTPHeaders.Set("User-Agent", cli.MessengerConfig.UserAgent)
+		fs.HTTPHeaders.Set("Cache-Control", "no-cache")
+		fs.HTTPHeaders.Set("Pragma", "no-cache")
+		//fs.HTTPHeaders.Set("Sec-Fetch-Dest", "empty")
+		//fs.HTTPHeaders.Set("Sec-Fetch-Mode", "websocket")
+		//fs.HTTPHeaders.Set("Sec-Fetch-Site", "cross-site")
+	}
+	return fs
+}
+
 func (cli *Client) unlockedConnect(ctx context.Context) error {
 	if cli.Store.Deleted {
 		return store.ErrDeviceDeleted
@@ -550,24 +567,47 @@ func (cli *Client) unlockedConnect(ctx context.Context) error {
 		routing_info = "?ED=" + routing_info
 	}
 
-	fs := socket.NewFrameSocket(cli.Log.Sub("Socket"), client, routing_info)
-	if cli.MessengerConfig != nil {
-		fs.URL = cli.MessengerConfig.WebsocketURL
-		fs.HTTPHeaders.Set("Origin", cli.MessengerConfig.BaseURL)
-		fs.HTTPHeaders.Set("User-Agent", cli.MessengerConfig.UserAgent)
-		fs.HTTPHeaders.Set("Cache-Control", "no-cache")
-		fs.HTTPHeaders.Set("Pragma", "no-cache")
-		//fs.HTTPHeaders.Set("Sec-Fetch-Dest", "empty")
-		//fs.HTTPHeaders.Set("Sec-Fetch-Mode", "websocket")
-		//fs.HTTPHeaders.Set("Sec-Fetch-Site", "cross-site")
-	}
+	fs := cli.newFrameSocket(client, routing_info)
 	if err := fs.Connect(ctx); err != nil {
 		fs.Close(0)
 		return err
-	} else if err = cli.doConnectHandshake(ctx, fs, *keys.NewKeyPair()); err != nil {
-		fs.Close(0)
-		return fmt.Errorf("noise handshake failed: %w", err)
 	}
+
+	// 执行第一轮握手
+	if err := cli.doConnectHandshake(ctx, fs, *keys.NewKeyPair()); err != nil {
+		fs.Close(0) // 彻底关闭第一轮那条已经损坏的旧连接
+
+		// 检查是否具备从 IK 切换到 XX 的条件
+		if !cli.shouldUseIKHandshake() {
+			return fmt.Errorf("noise handshake failed: %w", err)
+		}
+
+		cli.Log.Warnf("第一轮 IK 握手失败: %v。正在清理缓存并强行切换至 XX 模式重试...", err)
+
+		// ① 清理本地数据库中导致失败的旧服务器公钥/证书缓存
+		if cli.Store.ID != nil {
+			_ = cli.Store.Container.PutServerStaticInfo(ctx, cli.Store.ID.User, [32]byte{}, nil, time.Time{})
+			cli.Store.ServerStaticKey = [32]byte{}
+			cli.Store.CertificateChain = nil
+		}
+
+		// ② 再次复用 newFrameSocket 建立第二轮【干净】的 WebSocket 连接
+		fs = cli.newFrameSocket(client, routing_info)
+		if err = fs.Connect(ctx); err != nil {
+			fs.Close(0)
+			return fmt.Errorf("IK 失败后重连 WebSocket 失败: %w", err)
+		}
+
+		// ③ 在新连接上再次握手（此时由于清空了缓存，百分之百走 doXXHandshake）
+		if err = cli.doConnectHandshake(ctx, fs, *keys.NewKeyPair()); err != nil {
+			fs.Close(0)
+			return fmt.Errorf("XX 模式重试握手依然失败: %w", err)
+		}
+
+		cli.Log.Infof("通过 XX 模式成功原地救活连接！")
+	}
+
+	// ====== 挂载后续 Loop ======
 	go cli.keepAliveLoop(ctx, fs.Context())
 	go cli.handlerQueueLoop(ctx, fs.Context())
 	return nil
@@ -618,7 +658,7 @@ func (cli *Client) autoReconnect(ctx context.Context) {
 		return
 	}
 	for {
-		autoReconnectDelay := time.Duration(cli.AutoReconnectErrors+1) * 2 * time.Second
+		autoReconnectDelay := time.Duration(cli.AutoReconnectErrors) * 2 * time.Second
 		cli.Log.Debugf("Automatically reconnecting after %v", autoReconnectDelay)
 		cli.AutoReconnectErrors++
 		if cli.expectedDisconnect.WaitTimeoutCtx(ctx, autoReconnectDelay) == nil {
@@ -846,24 +886,6 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 	} else if cli.receiveResponse(ctx, node) {
 		// handled
 	} else if _, ok := cli.nodeHandlers[node.Tag]; ok {
-		// 被动心跳（服务器端心跳）
-		// service -> client
-		//	 <iq from="s.whatsapp.net" type="get" t="1763967643" xmlns="urn:xmpp:ping" />
-		// client -> service
-		//	 <iq type="result" to="s.whatsapp.net" />
-		if node.Tag == "iq" && node.Attrs["xmlns"] == "urn:xmpp:ping" {
-			// 回一个心跳包回去
-			// <iq type="result" to="s.whatsapp.net" />
-			cli.Log.Debugf("Received server ping frame")
-			_, _, err := cli.sendIQXmppPing(&infoQuery{
-				Type: "result",
-				To:   types.ServerJID,
-			})
-			if err != nil {
-				cli.Log.Warnf("Failed to send ping frame: %v", err)
-			}
-			return // 主动跳出
-		}
 
 		// 处理接收消息后回复<receipt，但是这里要排除<message category="peer"类型的消息 以及 自己设备发的消息
 		if node.Tag == "message" {
@@ -938,7 +960,7 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 				}
 				b64 := base64.StdEncoding.EncodeToString(data)
 				// 保存
-				_ = cli.Store.Container.PutRoutingInfo(ctx, b64)
+				_ = cli.Store.Container.PutRoutingInfo(ctx, cli.Store.ID.User, b64)
 				break
 			}
 		}
@@ -1013,7 +1035,7 @@ func (cli *Client) sendNodeAndGetData(ctx context.Context, node waBinary.Node) (
 		return nil, fmt.Errorf("failed to marshal node: %w", err)
 	}
 
-	cli.sendLog.Debugf("%s", node)
+	cli.sendLog.Debugf("%s", &node)
 	return payload, sock.SendFrame(ctx, payload)
 }
 
@@ -1152,46 +1174,6 @@ func (cli *Client) sendUnifiedSession() {
 	if err != nil {
 		cli.Log.Debugf("Failed to send unified_session telemetry: %v", err)
 	}
-}
-
-//----- add
-
-/*
-设置信任用户
-<iq to="s.whatsapp.net" type="set" xmlns="privacy" id="29294.52599-149">
-
-	<tokens>
-	   <token jid="639757430046@s.whatsapp.net" t="1761622030" type="trusted_contact" />
-	</tokens>
-
-</iq>
-*/
-func (cli *Client) SetTrustedContact(ctx context.Context, jid string) error {
-	if cli == nil {
-		return ErrClientIsNil
-	}
-	timeStamp := time.Now().Unix()
-
-	_, err := cli.sendIQ(ctx, infoQuery{
-		Namespace: "privacy",
-		Type:      "set",
-		To:        types.ServerJID,
-		Content: []waBinary.Node{{
-			Tag: "tokens",
-			Content: []waBinary.Node{{
-				Tag: "token",
-				Attrs: waBinary.Attrs{
-					"jid":  jid,
-					"t":    timeStamp,
-					"type": "trusted_contact",
-				},
-			}},
-		}},
-	})
-	if err != nil {
-		return fmt.Errorf("error SetTrustedContact: %w", err)
-	}
-	return nil
 }
 
 // 去掉 jid 的 :device 后缀，例如 "8618...20:18@s.whatsapp.net" → "8618...20:16@s.whatsapp.net"

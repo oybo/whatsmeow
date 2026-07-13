@@ -124,7 +124,6 @@ func (fs *FrameSocket) SendFrame(data []byte) error {
 	if conn == nil {
 		return ErrSocketClosed
 	}
-
 	dataLength := len(data)
 	if dataLength >= FrameMaxSize {
 		return fmt.Errorf("%w (got %d bytes, max %d bytes)", ErrFrameTooLarge, len(data), FrameMaxSize)

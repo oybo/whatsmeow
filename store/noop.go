@@ -253,11 +253,15 @@ func (n *NoopStore) DeleteDevice(ctx context.Context, store *Device) error {
 	return n.Error
 }
 
-func (n *NoopStore) PutRoutingInfo(ctx context.Context, routingInfo string) error {
+func (n *NoopStore) PutRoutingInfo(ctx context.Context, phoneNumber string, routingInfo string) error {
 	return n.Error
 }
 
-func (n *NoopStore) PutServerStaticInfo(ctx context.Context, pub [32]byte, cert []byte, exp time.Time) error {
+func (n *NoopStore) PutServerStaticInfo(ctx context.Context, phoneNumber string, pub [32]byte, cert []byte, exp time.Time) error {
+	return n.Error
+}
+
+func (n *NoopStore) PutLoginLc(ctx context.Context, phoneNumber string, lc int32) error {
 	return n.Error
 }
 

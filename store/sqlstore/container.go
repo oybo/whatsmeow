@@ -11,12 +11,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	math "math/rand"
-	"time"
-
 	"github.com/google/uuid"
 	"go.mau.fi/util/dbutil"
 	"go.mau.fi/util/random"
+	mathRand "math/rand/v2"
 
 	"go.mau.fi/whatsmeow/proto/waAdv"
 	"go.mau.fi/whatsmeow/store"
@@ -121,68 +119,6 @@ SELECT jid, lid, registration_id, noise_key, identity_key,
 FROM whatsmeow_device
 `
 
-const getRoutingInfoQuery = `
-SELECT routing_info
-FROM whatsmeow_device
-`
-
-func (c *Container) GetRoutingInfo(ctx context.Context) string {
-	var routingInfo string
-	err := c.db.QueryRow(ctx, getRoutingInfoQuery).Scan(&routingInfo)
-	if err != nil {
-		return ""
-	}
-	return routingInfo
-}
-
-const updateRoutingInfoQuery = `
-UPDATE whatsmeow_device
-SET routing_info = $1
-`
-
-func (c *Container) PutRoutingInfo(ctx context.Context, routingInfo string) error {
-	_, err := c.db.Exec(ctx, updateRoutingInfoQuery, routingInfo)
-	return err
-}
-
-const updateServerStaticPubQuery = `
-UPDATE whatsmeow_device
-SET server_static_pub = $1, certificate_chain = $2, cert_expires_at = $3`
-
-func (c *Container) PutServerStaticInfo(ctx context.Context, pub [32]byte, cert []byte, exp time.Time) error {
-	_, err := c.db.Exec(ctx, updateServerStaticPubQuery, pub[:], cert, exp.Unix())
-	return err
-}
-
-const getServerStaticPubQuery = `
-SELECT server_static_pub, certificate_chain, cert_expires_at
-FROM whatsmeow_device
-LIMIT 1`
-
-func (c *Container) GetServerStaticInfo(ctx context.Context) ([32]byte, []byte, time.Time, error) {
-	var pub [32]byte
-	var rawPub []byte // 🌟 新增：专门用来对齐数据库驱动的临时切片
-	var cert []byte
-	var exp int64
-
-	// 1. Scan 时，把第一个参数换成 &rawPub
-	err := c.db.QueryRow(ctx, getServerStaticPubQuery).Scan(&rawPub, &cert, &exp)
-	if err != nil {
-		return pub, nil, time.Time{}, err
-	}
-
-	// 2. 严格校验捞出来的公钥长度，防止数据库数据受损
-	if len(rawPub) != 32 {
-		return pub, nil, time.Time{}, fmt.Errorf("database returned invalid server_static_pub length: %d (expected 32)", len(rawPub))
-	}
-
-	// 3. 将切片中的数据深度复制到固定长度的 [32]byte 数组中
-	copy(pub[:], rawPub)
-
-	// 4. 完美返回
-	return pub, cert, time.Unix(exp, 0), nil
-}
-
 const getDeviceQuery = getAllDevicesQuery + " WHERE jid=$1"
 
 func (c *Container) scanDevice(row dbutil.Scannable) (*store.Device, error) {
@@ -211,40 +147,17 @@ func (c *Container) scanDevice(row dbutil.Scannable) (*store.Device, error) {
 	device.Account = &account
 	device.FacebookUUID = fbUUID.UUID
 
-	//// ==================== 1. 新增：解析输入的 Base64 静态公私钥 ====================
-	//
-	//// 动态覆盖当前客户端存储中的 NoiseKey (如果 Store 为空则需要先初始化)
-	//inputNoisePubBase64 := "aPTsIzcOwGtphGCw+32gNEihpvA23Fka4pATWdK74Gc="
-	//inputNoisePrivBase64 := "0AymGsEYooyBK1+/OdPjlPr/q5G5iMwmQwFl9HU3g3k="
-	//noisePubArr, noisePrivArr, err := GetStaticKey(inputNoisePubBase64, inputNoisePrivBase64)
-	//if err == nil {
-	//	device.NoiseKey = &keys.KeyPair{
-	//		Pub:  noisePubArr,
-	//		Priv: noisePrivArr,
-	//	}
-	//}
-	//
-	//inputIdentityPubBase64 := "qLIYAFS0g/I7rrsHzgyTTTDeqBTfKauCj+QRS9wIqDA="
-	//inputIdentityPrivBase64 := "qCcfRKO7pUy1I+KbrdB6zewwnBeRajCGRVJp20XCmkc="
-	//identityPubArr, identityPrivArr, err := GetStaticKey(inputIdentityPubBase64, inputIdentityPrivBase64)
-	//if err == nil {
-	//	device.IdentityKey = &keys.KeyPair{
-	//		Pub:  identityPubArr,
-	//		Priv: identityPrivArr,
-	//	}
-	//}
-	//
-	//// =========================================================================
-
 	// 单独查询routing_info
-	device.RoutingInfo = c.GetRoutingInfo(context.Background())
+	device.RoutingInfo = c.GetRoutingInfo(context.Background(), device.ID.User)
 	// 查询server static pubkey
-	serverStaticKey, cert, expTime, err := c.GetServerStaticInfo(context.Background())
+	serverStaticKey, cert, expTime, err := c.GetServerStaticInfo(context.Background(), device.ID.User)
 	if err == nil {
 		device.ServerStaticKey = serverStaticKey
 		device.CertificateChain = cert
 		device.ServerKeyExp = expTime
 	}
+	// 查询client payload的lc
+	device.LoginLc = c.GetLoginLc(context.Background(), device.ID.User)
 
 	c.initializeDevice(&device)
 
@@ -255,7 +168,6 @@ func (c *Container) scanDevice(row dbutil.Scannable) (*store.Device, error) {
 func (c *Container) GetAllDevices(ctx context.Context) ([]*store.Device, error) {
 	res, err := c.db.Query(ctx, getAllDevicesQuery)
 	return dbutil.NewRowIterWithError(res, c.scanDevice, err).AsList()
-
 }
 
 // GetFirstDevice is a convenience method for getting the first device in the store. If there are
@@ -314,7 +226,7 @@ func (c *Container) NewDevice() *store.Device {
 
 		NoiseKey:       keys.NewKeyPair(),
 		IdentityKey:    keys.NewKeyPair(),
-		RegistrationID: uint32(math.Intn(9000) + 1000), // web端该值为随机生成4位数字
+		RegistrationID: mathRand.Uint32(),
 		AdvSecretKey:   random.Bytes(32),
 	}
 	device.SignedPreKey = device.IdentityKey.CreateSignedPreKey(1)

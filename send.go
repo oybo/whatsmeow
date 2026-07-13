@@ -183,7 +183,7 @@ type SendRequestExtra struct {
 // in binary/proto/def.proto may be useful to find out all the allowed fields. Printing the RawMessage
 // field in incoming message events to figure out what it contains is also a good way to learn how to
 // send the same kind of message.
-func (cli *Client) SendMessage(ctx context.Context, isLid bool, notToMe bool, isBiz bool, to types.JID, message *waE2E.Message, extra ...SendRequestExtra) (resp SendResponse, err error) {
+func (cli *Client) SendMessage(ctx context.Context, notToMe bool, to types.JID, message *waE2E.Message, extra ...SendRequestExtra) (resp SendResponse, err error) {
 	if cli == nil {
 		err = ErrClientIsNil
 		return
@@ -274,7 +274,7 @@ func (cli *Client) SendMessage(ctx context.Context, isLid bool, notToMe bool, is
 				},
 			}
 
-			messagePlaintext, _, marshalErr := cli.marshalMessage(req.InlineBotJID, botMessage)
+			messagePlaintext, _, marshalErr := marshalMessage(req.InlineBotJID, botMessage)
 			if marshalErr != nil {
 				err = marshalErr
 				return
@@ -323,7 +323,7 @@ func (cli *Client) SendMessage(ctx context.Context, isLid bool, notToMe bool, is
 		resp.DebugTimings.GetParticipants = time.Since(start)
 	} else if to.Server == types.HiddenUserServer {
 		ownID = cli.getOwnLID()
-	} else if to.Server == types.DefaultUserServer && cli.Store.LIDMigrationTimestamp > 0 && isLid {
+	} else if to.Server == types.DefaultUserServer && cli.Store.LIDMigrationTimestamp > 0 && !req.Peer {
 		start := time.Now()
 		var toLID types.JID
 		toLID, err = cli.Store.LIDs.GetLIDForPN(ctx, to)
@@ -374,10 +374,12 @@ func (cli *Client) SendMessage(ctx context.Context, isLid bool, notToMe bool, is
 	resp.DebugTimings.Queue = time.Since(start)
 	defer cli.messageSendLock.Unlock()
 
-	respChan := cli.waitResponse(req.ID)
 	// Peer message retries aren't implemented yet
 	if !req.Peer {
-		cli.addRecentMessage(ctx, to, req.ID, message, nil)
+		err = cli.addRecentMessage(ctx, to, req.ID, message, nil)
+		if err != nil {
+			return
+		}
 	}
 
 	if message.GetMessageContextInfo().GetMessageSecret() != nil {
@@ -388,16 +390,18 @@ func (cli *Client) SendMessage(ctx context.Context, isLid bool, notToMe bool, is
 			cli.Log.Debugf("Stored message secret key for outgoing message %s", req.ID)
 		}
 	}
+
+	respChan := cli.waitResponse(req.ID)
 	var phash string
 	var data []byte
 	switch to.Server {
 	case types.GroupServer, types.BroadcastServer:
-		phash, data, err = cli.sendGroup(ctx, ownID, to, groupParticipants, req.ID, message, &resp.DebugTimings, extraParams, isBiz)
+		phash, data, err = cli.sendGroup(ctx, ownID, to, groupParticipants, req.ID, message, &resp.DebugTimings, extraParams)
 	case types.DefaultUserServer, types.BotServer, types.HiddenUserServer:
 		if req.Peer {
 			data, err = cli.sendPeerMessage(ctx, to, req.ID, message, &resp.DebugTimings)
 		} else {
-			phash, data, err = cli.sendDM(ctx, ownID, to, req.ID, message, &resp.DebugTimings, extraParams, notToMe, isBiz)
+			phash, data, err = cli.sendDM(ctx, ownID, to, req.ID, message, &resp.DebugTimings, extraParams, notToMe)
 		}
 	case types.NewsletterServer:
 		data, err = cli.sendNewsletter(ctx, to, req.ID, message, req.MediaHandle, &resp.DebugTimings)
@@ -467,7 +471,7 @@ func (cli *Client) SendPeerMessage(ctx context.Context, message *waE2E.Message) 
 	if ownID.IsEmpty() {
 		return SendResponse{}, ErrNotLoggedIn
 	}
-	return cli.SendMessage(ctx, true, false, false, ownID, message, SendRequestExtra{Peer: true})
+	return cli.SendMessage(ctx, false, ownID, message, SendRequestExtra{Peer: true})
 }
 
 // RevokeMessage deletes the given message from everyone in the chat.
@@ -477,7 +481,7 @@ func (cli *Client) SendPeerMessage(ctx context.Context, message *waE2E.Message) 
 //
 // Deprecated: This method is deprecated in favor of BuildRevoke
 func (cli *Client) RevokeMessage(ctx context.Context, chat types.JID, id types.MessageID) (SendResponse, error) {
-	return cli.SendMessage(ctx, true, false, false, chat, cli.BuildRevoke(chat, types.EmptyJID, id))
+	return cli.SendMessage(ctx, false, chat, cli.BuildRevoke(chat, types.EmptyJID, id))
 }
 
 // BuildMessageKey builds a MessageKey object, which is used to refer to previous messages
@@ -535,7 +539,7 @@ func (cli *Client) BuildReaction(chat, sender types.JID, id types.MessageID, rea
 // BuildUnavailableMessageRequest builds a message to request the user's primary device to send
 // the copy of a message that this client was unable to decrypt.
 //
-// The built message can be sent using Client.SendMessage, but you must pass whatsmeow.SendRequestExtra{Peer: true} as the last parameter.
+// The built message can be sent using Client.SendPeerMessage.
 // The full response will come as a ProtocolMessage with type `PEER_DATA_OPERATION_REQUEST_RESPONSE_MESSAGE`.
 // The response events will also be dispatched as normal *events.Message's with UnavailableRequestID set to the request message ID.
 func (cli *Client) BuildUnavailableMessageRequest(chat, sender types.JID, id string) *waE2E.Message {
@@ -554,7 +558,7 @@ func (cli *Client) BuildUnavailableMessageRequest(chat, sender types.JID, id str
 
 // BuildHistorySyncRequest builds a message to request additional history from the user's primary device.
 //
-// The built message can be sent using Client.SendMessage, but you must pass whatsmeow.SendRequestExtra{Peer: true} as the last parameter.
+// The built message can be sent using Client.SendPeerMessage.
 // The response will come as an *events.HistorySync with type `ON_DEMAND`.
 //
 // The response will contain to `count` messages immediately before the given message.
@@ -643,7 +647,7 @@ func (cli *Client) SetDisappearingTimer(ctx context.Context, chat types.JID, tim
 		if settingTS.IsZero() {
 			settingTS = time.Now()
 		}
-		_, err = cli.SendMessage(ctx, true, false, false, chat, &waE2E.Message{
+		_, err = cli.SendMessage(ctx, false, chat, &waE2E.Message{
 			ProtocolMessage: &waE2E.ProtocolMessage{
 				Type:                      waE2E.ProtocolMessage_EPHEMERAL_SETTING.Enum(),
 				EphemeralExpiration:       proto.Uint32(uint32(timer.Seconds())),
@@ -705,7 +709,7 @@ func (cli *Client) sendNewsletter(
 		message = nil
 	}
 	start := time.Now()
-	plaintext, _, err := cli.marshalMessage(to, message)
+	plaintext, _, err := marshalMessage(to, message)
 	timings.Marshal = time.Since(start)
 	if err != nil {
 		return nil, err
@@ -750,10 +754,9 @@ func (cli *Client) sendGroup(
 	message *waE2E.Message,
 	timings *MessageDebugTimings,
 	extraParams nodeExtraParams,
-	isBiz bool,
 ) (string, []byte, error) {
 	start := time.Now()
-	plaintext, _, err := cli.marshalMessage(to, message)
+	plaintext, _, err := marshalMessage(to, message)
 	timings.Marshal = time.Since(start)
 	if err != nil {
 		return "", nil, err
@@ -786,7 +789,7 @@ func (cli *Client) sendGroup(
 	timings.GroupEncrypt = time.Since(start)
 
 	node, allDevices, err := cli.prepareMessageNode(
-		ctx, to, id, message, participants, skdPlaintext, nil, timings, extraParams, isBiz,
+		ctx, to, id, message, participants, skdPlaintext, nil, timings, extraParams,
 	)
 	if err != nil {
 		return "", nil, err
@@ -845,23 +848,80 @@ func (cli *Client) sendDM(
 	timings *MessageDebugTimings,
 	extraParams nodeExtraParams,
 	notToMe bool, // 不要发给我自己的主设备
-	isBiz bool, // 是否携带biz标签
 ) (string, []byte, error) {
 	start := time.Now()
-	// 序列化msg proto 转成二进制字节流
-	messagePlaintext, deviceSentMessagePlaintext, err := cli.marshalMessage(to, message)
+	messagePlaintext, deviceSentMessagePlaintext, err := marshalMessage(to, message)
 	timings.Marshal = time.Since(start)
 	if err != nil {
 		return "", nil, err
 	}
 
+	// 固定添加好友？
+	contact, err := cli.Store.Contacts.GetContact(ctx, to)
+	if err == nil {
+		if contact.FullName == "" {
+			// 不在好友列表
+			cli.Log.Warnf("准备添加联系人: %v", to)
+			err = cli.AddContact(to)
+			if err != nil {
+				cli.Log.Warnf("添加联系人失败: %v", err)
+			} else {
+				cli.Log.Warnf("添加联系人成功: %v", to)
+			}
+
+			randomSleep(60000, 180000)
+		}
+	}
+
+	// 在这里模拟真人行为协议包？
+
+	// 1、发送自己在线状态
+	// <presence type="available" name="Tank" />
+	_ = cli.SendPresence(ctx, types.PresenceAvailable)
+
+	// 2-3分钟后离线
+	go func(c *Client) {
+		waitSeconds := 120 + rand.Intn(60)
+		time.Sleep(time.Duration(waitSeconds) * time.Second)
+		if c != nil && c.IsConnected() {
+			_ = c.SendPresence(ctx, types.PresenceUnavailable)
+		}
+	}(cli)
+
+	// 2、发送订阅请求
+	fmt.Println("2、发送订阅请求")
+	// <presence type="subscribe" to="639757430046@s.whatsapp.net"><tctoken>0401173767940d8cc2be16</tctoken></presence>
+	_ = cli.SubscribePresence(ctx, to)
+
+	// 3、开始输入
+	// <chatstate to="639757430046@s.whatsapp.net"><composing /></chatstate>
+	_ = cli.SendChatPresence(
+		ctx,
+		to,
+		types.ChatPresenceComposing,
+		types.ChatPresenceMediaText,
+	)
+
+	// 延迟1 - 2 秒
+	randomSleep(2000, 3000)
+
+	// 5、输入结束
+	// <chatstate to="639757430046@s.whatsapp.net"><paused /></chatstate>
+	_ = cli.SendChatPresence(
+		ctx,
+		to,
+		types.ChatPresencePaused,
+		types.ChatPresenceMediaText,
+	)
+
 	participants := []types.JID{to, ownID.ToNonAD()}
 	if notToMe {
 		participants = []types.JID{to}
 	}
+
 	node, allDevices, err := cli.prepareMessageNode(
 		ctx, to, id, message, participants,
-		messagePlaintext, deviceSentMessagePlaintext, timings, extraParams, isBiz,
+		messagePlaintext, deviceSentMessagePlaintext, timings, extraParams,
 	)
 	if err != nil {
 		return "", nil, err
@@ -947,8 +1007,6 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
 	case msg.ExtendedTextMessage != nil && msg.ExtendedTextMessage.Title != nil:
 		return "url"
 	case msg.ImageMessage != nil:
-		return "image"
-	case msg.InteractiveMessage != nil:
 		return "image"
 	case msg.StickerMessage != nil:
 		return "sticker"
@@ -1120,7 +1178,6 @@ func (cli *Client) getMessageContent(
 	msgAttrs waBinary.Attrs,
 	includeIdentity bool,
 	extraParams nodeExtraParams,
-	isBiz bool,
 ) []waBinary.Node {
 	content := []waBinary.Node{baseNode}
 	if includeIdentity {
@@ -1158,60 +1215,7 @@ func (cli *Client) getMessageContent(
 			}},
 		})
 	}
-	// 对于 ViewOnceMessage 这种类型 message，必须加上这段东西才正常
-	// <biz actual_actors="2" host_storage="2" privacy_mode_ts="1700600443">
-	//      <interactive type="native_flow" v="1">
-	//			<native_flow name="mixed" v="9"/>
-	//	  	</interactive>
-	//	  	<quality_control source_type="third_party"/>
-	//   </biz>
-
-	if isBiz {
-		content = append(content, waBinary.Node{
-			Tag: "biz",
-			Attrs: waBinary.Attrs{
-				"actual_actors":   "2",
-				"host_storage":    "2",
-				"privacy_mode_ts": randomPrivacyModeTS(),
-			},
-			Content: []waBinary.Node{{
-				Tag: "interactive",
-				Attrs: waBinary.Attrs{
-					"type": "native_flow",
-					"v":    "1",
-				},
-				Content: []waBinary.Node{{
-					Tag: "native_flow",
-					Attrs: waBinary.Attrs{
-						"name": "mixed",
-						"v":    "9",
-					},
-				}},
-			}, {
-				Tag: "quality_control",
-				Attrs: waBinary.Attrs{
-					"source_type": "third_party",
-				},
-			}},
-		})
-
-		// <bot biz_bot="1"/>
-		content = append(content, waBinary.Node{
-			Tag: "bot",
-			Attrs: waBinary.Attrs{
-				"biz_bot": "1",
-			},
-		})
-	}
-
 	return content
-}
-
-func randomPrivacyModeTS() string {
-	base := int64(1700600443)
-	// 上下浮动 6 小时（-6h ~ +6h）
-	offset := rand.Int63n(12*3600) - 6*3600
-	return strconv.FormatInt(base+offset, 10)
 }
 
 func (cli *Client) prepareMessageNode(
@@ -1223,20 +1227,12 @@ func (cli *Client) prepareMessageNode(
 	plaintext, dsmPlaintext []byte,
 	timings *MessageDebugTimings,
 	extraParams nodeExtraParams,
-	isBiz bool,
 ) (*waBinary.Node, []types.JID, error) {
 	start := time.Now()
 	allDevices, err := cli.GetUserDevices(ctx, participants)
 	timings.GetDevices = time.Since(start)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get device list: %w", err)
-	}
-
-	if to.Server == types.DefaultUserServer || to.Server == types.HiddenUserServer {
-		if !isAllParticipantsInAllDevices(participants, allDevices) {
-			cli.Log.Warnf("NotAllParticipantsInAllDevices")
-			return nil, nil, fmt.Errorf("NotAllParticipantsInAllDevices")
-		}
 	}
 
 	if to.Server == types.GroupServer {
@@ -1276,7 +1272,6 @@ func (cli *Client) prepareMessageNode(
 	}
 
 	start = time.Now()
-	// 对所有设备进行Signal 端到端加密
 	participantNodes, includeIdentity, err := cli.encryptMessageForDevices(
 		ctx, allDevices, id, plaintext, dsmPlaintext, encAttrs,
 	)
@@ -1292,12 +1287,12 @@ func (cli *Client) prepareMessageNode(
 		Tag:   "message",
 		Attrs: attrs,
 		Content: cli.getMessageContent(
-			participantNode, message, attrs, includeIdentity, extraParams, isBiz,
+			participantNode, message, attrs, includeIdentity, extraParams,
 		),
 	}, allDevices, nil
 }
 
-func (cli *Client) marshalMessage(to types.JID, message *waE2E.Message) (plaintext, dsmPlaintext []byte, err error) {
+func marshalMessage(to types.JID, message *waE2E.Message) (plaintext, dsmPlaintext []byte, err error) {
 	if message == nil && to.Server == types.NewsletterServer {
 		return
 	}
@@ -1315,8 +1310,6 @@ func (cli *Client) marshalMessage(to types.JID, message *waE2E.Message) (plainte
 			},
 			MessageContextInfo: message.MessageContextInfo,
 		})
-		// 打印发送的msg proto
-		fmt.Println("msg proto:", hex.EncodeToString(dsmPlaintext))
 		if err != nil {
 			err = fmt.Errorf("failed to marshal message (for own devices): %w", err)
 			return
@@ -1355,7 +1348,6 @@ func (cli *Client) encryptMessageForDevices(
 			pnDevices = append(pnDevices, jid)
 		}
 	}
-	// 根据上面的pn_jid，先去数据库中查找对应关系的lid
 	lidMappings, err := cli.Store.LIDs.GetManyLIDsForPNs(ctx, pnDevices)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to fetch LID mappings: %w", err)
@@ -1366,14 +1358,12 @@ func (cli *Client) encryptMessageForDevices(
 	sessionAddresses := make([]string, 0, len(allDevices))
 	for _, jid := range allDevices {
 		if jid == ownJID || jid == ownLID {
-			// 跳过当前发送者自己设备
 			continue
 		}
 		encryptionIdentity := jid
 		if jid.Server == types.DefaultUserServer {
 			// TODO query LID from server for missing entries
 			if lidForPN, ok := lidMappings[jid]; ok && !lidForPN.IsEmpty() {
-				// 迁移密钥 Session 到 LID
 				cli.migrateSessionStore(ctx, jid, lidForPN)
 				encryptionIdentity = lidForPN
 			}
@@ -1384,7 +1374,6 @@ func (cli *Client) encryptMessageForDevices(
 		sessionAddressToJID[addr] = jid
 	}
 
-	// 查询本地是否存在过会话
 	existingSessions, ctx, err := cli.Store.WithCachedSessions(ctx, sessionAddresses)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to prefetch sessions: %w", err)
@@ -1395,22 +1384,14 @@ func (cli *Client) encryptMessageForDevices(
 			retryDevices = append(retryDevices, sessionAddressToJID[addr])
 		}
 	}
-
-	// 端到端加密需要本地与每个设备都有一个加密会话（Session）。
-	// 1、先去本地数据库批量加载已有的会话缓存（WithCachedSessions）
-	// 如果发现本地数据库里没有某个设备的会话记录（!exists），说明是第一次给这个设备发消息。代码会将这些设备挑出来，调用 fetchPreKeysNoError 向 WhatsApp 服务器请求对方的 PreKey 密钥包（Bundle）。
 	bundles := cli.fetchPreKeysNoError(ctx, retryDevices)
 
-	// 遍历设备，逐个加密
 	for _, jid := range allDevices {
 		plaintext := msgPlaintext
 		if jid == ownJID || jid == ownLID {
 			continue
 		}
 		if (jid.User == ownJID.User || jid.User == ownLID.User) && dsmPlaintext != nil {
-			if jid == ownJID || jid == ownLID {
-				continue
-			}
 			plaintext = dsmPlaintext
 		}
 		encrypted, isPreKey, err := cli.encryptMessageForDeviceAndWrap(

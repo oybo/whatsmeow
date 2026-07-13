@@ -156,12 +156,10 @@ func (cli *Client) applyAppStatePatches(
 	fullSync bool,
 	eventsToDispatch *[]any,
 ) (appstate.HashState, error) {
-	// 更改，不校验mac hash
-	mutations, newState, err := cli.appStateProc.DecodePatches(ctx, patches, state, false)
+	mutations, newState, err := cli.appStateProc.DecodePatches(ctx, patches, state, true)
 	if err != nil {
 		if errors.Is(err, appstate.ErrKeyNotFound) {
-			// 添加fullSync参数，如果fullSync则不执行24小时限制
-			go cli.requestMissingAppStateKeys(context.WithoutCancel(ctx), patches, fullSync)
+			go cli.requestMissingAppStateKeys(context.WithoutCancel(ctx), patches)
 		} else {
 			cli.dispatchEvent(&events.AppStateSyncError{Name: name, FullSync: fullSync, Error: err})
 		}
@@ -460,7 +458,7 @@ func (cli *Client) fetchAppStatePatches(ctx context.Context, name appstate.WAPat
 	return appstate.ParsePatchList(ctx, &collection, cli.downloadExternalAppStateBlob)
 }
 
-func (cli *Client) requestMissingAppStateKeys(ctx context.Context, patches *appstate.PatchList, fullSync bool) {
+func (cli *Client) requestMissingAppStateKeys(ctx context.Context, patches *appstate.PatchList) {
 	cli.appStateKeyRequestsLock.Lock()
 	rawKeyIDs := cli.appStateProc.GetMissingKeyIDs(ctx, patches)
 	filteredKeyIDs := make([][]byte, 0, len(rawKeyIDs))
@@ -468,7 +466,7 @@ func (cli *Client) requestMissingAppStateKeys(ctx context.Context, patches *apps
 	for _, keyID := range rawKeyIDs {
 		stringKeyID := hex.EncodeToString(keyID)
 		lastRequestTime := cli.appStateKeyRequests[stringKeyID]
-		if lastRequestTime.IsZero() || lastRequestTime.Add(24*time.Hour).Before(now) || fullSync {
+		if lastRequestTime.IsZero() || lastRequestTime.Add(24*time.Hour).Before(now) {
 			cli.appStateKeyRequests[stringKeyID] = now
 			filteredKeyIDs = append(filteredKeyIDs, keyID)
 		}

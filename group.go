@@ -60,13 +60,13 @@ func (cli *Client) CreateGroup(ctx context.Context, req ReqCreateGroup) (*types.
 			Tag:   "participant",
 			Attrs: waBinary.Attrs{"jid": participant},
 		}
-		pt, err := cli.Store.PrivacyTokens.GetPrivacyToken(ctx, participant)
+		token, err := cli.ensureTCToken(ctx, participant)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get privacy token for participant %s: %v", participant, err)
-		} else if pt != nil {
+		} else if len(token) > 0 {
 			participantNodes[i].Content = []waBinary.Node{{
 				Tag:     "privacy",
-				Content: pt.Token,
+				Content: token,
 			}}
 		}
 	}
@@ -199,6 +199,17 @@ func (cli *Client) UpdateGroupParticipants(ctx context.Context, jid types.JID, p
 				return nil, fmt.Errorf("failed to get phone number for LID %s: %v", participantJID, err)
 			} else if !pn.IsEmpty() {
 				content[i].Attrs["phone_number"] = pn
+			}
+		}
+		if action == ParticipantChangeAdd {
+			token, err := cli.ensureTCToken(ctx, participantJID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get privacy token for participant %s: %v", participantJID, err)
+			} else if len(token) > 0 {
+				content[i].Content = []waBinary.Node{{
+					Tag:     "privacy",
+					Content: token,
+				}}
 			}
 		}
 	}
@@ -523,7 +534,7 @@ func (cli *Client) GetJoinedGroups(ctx context.Context) ([]*types.GroupInfo, err
 	var allRedactedPhones []store.RedactedPhoneEntry
 	for _, child := range children {
 		if child.Tag != "group" {
-			cli.Log.Debugf("Unexpected child in group list response: %s", child)
+			cli.Log.Debugf("Unexpected child in group list response: %s", &child)
 			continue
 		}
 		parsed, parseErr := cli.parseGroupNode(&child)
@@ -760,7 +771,7 @@ func (cli *Client) parseGroupNode(groupNode *waBinary.Node) (*types.GroupInfo, e
 		case "suspended":
 			group.Suspended = true
 		default:
-			cli.Log.Debugf("Unknown element in group node %s: %s", group.JID.String(), child)
+			cli.Log.Debugf("Unknown element in group node %s: %s", group.JID.String(), &child)
 		}
 		if !childAG.OK() {
 			cli.Log.Warnf("Possibly failed to parse %s element in group node: %+v", child.Tag, childAG.Errors)
@@ -890,7 +901,7 @@ func (cli *Client) parseGroupChange(node *waBinary.Node) (*events.GroupInfo, []s
 				topicChild := child.GetChildByTag("body")
 				topicBytes, ok := topicChild.Content.([]byte)
 				if !ok {
-					return nil, nil, fmt.Errorf("group change description has unexpected body: %s", topicChild)
+					return nil, nil, fmt.Errorf("group change description has unexpected body: %s", &topicChild)
 				}
 				topicStr = string(topicBytes)
 			}

@@ -76,7 +76,7 @@ func (int *DangerousInternalClient) FetchAppStatePatches(ctx context.Context, na
 }
 
 func (int *DangerousInternalClient) RequestMissingAppStateKeys(ctx context.Context, patches *appstate.PatchList) {
-	int.c.requestMissingAppStateKeys(ctx, patches, false)
+	int.c.requestMissingAppStateKeys(ctx, patches)
 }
 
 func (int *DangerousInternalClient) RequestAppStateKeys(ctx context.Context, rawKeyIDs [][]byte) {
@@ -672,7 +672,7 @@ func (int *DangerousInternalClient) SendNewsletter(ctx context.Context, to types
 }
 
 func (int *DangerousInternalClient) SendGroup(ctx context.Context, ownID, to types.JID, participants []types.JID, id types.MessageID, message *waE2E.Message, timings *MessageDebugTimings, extraParams nodeExtraParams) (string, []byte, error) {
-	return int.c.sendGroup(ctx, ownID, to, participants, id, message, timings, extraParams, false)
+	return int.c.sendGroup(ctx, ownID, to, participants, id, message, timings, extraParams)
 }
 
 func (int *DangerousInternalClient) SendPeerMessage(ctx context.Context, to types.JID, id types.MessageID, message *waE2E.Message, timings *MessageDebugTimings) ([]byte, error) {
@@ -680,7 +680,7 @@ func (int *DangerousInternalClient) SendPeerMessage(ctx context.Context, to type
 }
 
 func (int *DangerousInternalClient) SendDM(ctx context.Context, ownID, to types.JID, id types.MessageID, message *waE2E.Message, timings *MessageDebugTimings, extraParams nodeExtraParams) (string, []byte, error) {
-	return int.c.sendDM(ctx, ownID, to, id, message, timings, extraParams, false, false)
+	return int.c.sendDM(ctx, ownID, to, id, message, timings, extraParams, false)
 }
 
 func (int *DangerousInternalClient) PreparePeerMessageNode(ctx context.Context, to types.JID, id types.MessageID, message *waE2E.Message, timings *MessageDebugTimings) (*waBinary.Node, error) {
@@ -688,11 +688,11 @@ func (int *DangerousInternalClient) PreparePeerMessageNode(ctx context.Context, 
 }
 
 func (int *DangerousInternalClient) GetMessageContent(baseNode waBinary.Node, message *waE2E.Message, msgAttrs waBinary.Attrs, includeIdentity bool, extraParams nodeExtraParams) []waBinary.Node {
-	return int.c.getMessageContent(baseNode, message, msgAttrs, includeIdentity, extraParams, false)
+	return int.c.getMessageContent(baseNode, message, msgAttrs, includeIdentity, extraParams)
 }
 
 func (int *DangerousInternalClient) PrepareMessageNode(ctx context.Context, to types.JID, id types.MessageID, message *waE2E.Message, participants []types.JID, plaintext, dsmPlaintext []byte, timings *MessageDebugTimings, extraParams nodeExtraParams) (*waBinary.Node, []types.JID, error) {
-	return int.c.prepareMessageNode(ctx, to, id, message, participants, plaintext, dsmPlaintext, timings, extraParams, false)
+	return int.c.prepareMessageNode(ctx, to, id, message, participants, plaintext, dsmPlaintext, timings, extraParams)
 }
 
 func (int *DangerousInternalClient) MakeDeviceIdentityNode() waBinary.Node {

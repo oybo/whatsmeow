@@ -228,7 +228,7 @@ func (cli *Client) retryFrame(
 		return nil, ErrIQTimedOut
 	}
 	if isDisconnectNode(resp) {
-		cli.Log.Debugf("Retrying %s %s was interrupted by websocket disconnection (%v), not retrying anymore", reqType, id, resp)
+		cli.Log.Debugf("Retrying %s %s was interrupted by websocket disconnection (%s), not retrying anymore", reqType, id, resp)
 		return nil, &DisconnectedError{Action: fmt.Sprintf("%s (retry)", reqType), Node: resp}
 	}
 	return resp, nil

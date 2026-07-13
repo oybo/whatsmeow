@@ -37,14 +37,6 @@ func (cli *Client) handleStreamError(ctx context.Context, node *waBinary.Node) {
 				cli.Log.Errorf("Failed to reconnect after 515 code: %v", err)
 			}
 		}()
-	case code == "516":
-		cli.expectDisconnect()
-		cli.Log.Infof("Got 516 code, sending LoggedOut event and deleting session")
-		go cli.dispatchEvent(&events.LoggedOut{OnConnect: false, Reason: events.ConnectFailureLoginFailed516})
-		err := cli.Store.Delete(ctx)
-		if err != nil {
-			cli.Log.Warnf("Failed to delete store after 516 error: %v", err)
-		}
 	case code == "401" && conflictType == "device_removed":
 		cli.expectDisconnect()
 		cli.Log.Infof("Got device removed stream error, sending LoggedOut event and deleting session")
@@ -164,6 +156,10 @@ func (cli *Client) handleConnectFailure(ctx context.Context, node *waBinary.Node
 }
 
 func (cli *Client) handleConnectSuccess(ctx context.Context, node *waBinary.Node) {
+	if !cli.paired.Load() {
+		cli.Log.Warnf("Received connect success without pairing, ignoring")
+		return
+	}
 	cli.Log.Infof("Successfully authenticated")
 	cli.LastSuccessfulConnect = time.Now()
 	cli.AutoReconnectErrors = 0
@@ -201,16 +197,10 @@ func (cli *Client) handleConnectSuccess(ctx context.Context, node *waBinary.Node
 				cli.Log.Debugf("Prekey count after upload: %d", sc)
 			}
 		}
-
-		//if cli.Store.RoutingInfo == "" {
-		// 这里和登录那的payload保持同步，那里如果为false了，则不需要再发这个
-		// 这个的意思应该是告诉服务器，我现在准备好了，已经在线了，可以给我正常消息同步了
 		err := cli.SetPassive(ctx, false)
 		if err != nil {
 			cli.Log.Warnf("Failed to send post-connect passive IQ: %v", err)
 		}
-		//}
-
 		cli.dispatchEvent(&events.Connected{})
 		cli.closeSocketWaitChan()
 	}()

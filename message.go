@@ -660,10 +660,6 @@ func padMessage(plaintext []byte) []byte {
 func (cli *Client) handleSenderKeyDistributionMessage(ctx context.Context, chat, from types.JID, axolotlSKDM []byte) {
 	builder := groups.NewGroupSessionBuilder(cli.Store, pbSerializer)
 	senderKeyName := protocol.NewSenderKeyName(chat.String(), from.SignalAddress())
-	if axolotlSKDM == nil || len(axolotlSKDM) == 0 {
-		cli.Log.Errorf("Failed to parse sender key distribution message, axolotlSKDM is empty")
-		return
-	}
 	sdkMsg, err := protocol.NewSenderKeyDistributionMessageFromBytes(axolotlSKDM, pbSerializer.SenderKeyDistributionMessage)
 	if err != nil {
 		cli.Log.Errorf("Failed to parse sender key distribution message from %s for %s: %v", from, chat, err)
@@ -949,7 +945,6 @@ func (cli *Client) storeHistoricalMessageSecrets(ctx context.Context, conversati
 		if chatJID.IsEmpty() {
 			continue
 		}
-		// 更改：WhatsApp早已经升级到了lid，不能再只判断s.whatsapp.net，需要改成兼容lid，这里的做法是兼容whatsmeow的体系，按jid来存储
 		var chatPN types.JID
 		if chatJID.Server == types.DefaultUserServer {
 			chatPN = chatJID

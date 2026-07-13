@@ -7,6 +7,7 @@
 package store
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/binary"
 	"encoding/hex"
@@ -103,8 +104,7 @@ func SetWAVersion(version WAVersionContainer) {
 var BaseClientPayload = &waWa6.ClientPayload{
 	// 5
 	UserAgent: &waWa6.ClientPayload_UserAgent{
-		//Platform:       waWa6.ClientPayload_UserAgent_WEB.Enum(),
-		Platform:       waWa6.ClientPayload_UserAgent_ANDROID.Enum(),
+		Platform:       waWa6.ClientPayload_UserAgent_WEB.Enum(),
 		AppVersion:     waVersion.ProtoAppVersion(),
 		Mcc:            proto.String("000"),
 		Mnc:            proto.String("000"),
@@ -119,8 +119,7 @@ var BaseClientPayload = &waWa6.ClientPayload{
 	},
 	// 6
 	WebInfo: &waWa6.ClientPayload_WebInfo{
-		//WebSubPlatform: waWa6.ClientPayload_WebInfo_WEB_BROWSER.Enum(),
-		WebSubPlatform: waWa6.ClientPayload_WebInfo_APP_STORE.Enum(),
+		WebSubPlatform: waWa6.ClientPayload_WebInfo_WEB_BROWSER.Enum(),
 	},
 	// 12
 	ConnectType: waWa6.ClientPayload_WIFI_UNKNOWN.Enum(),
@@ -136,9 +135,7 @@ var DeviceProps = &waCompanionReg.DeviceProps{
 		Primary: proto.Uint32(10),
 	},
 	// 3
-	//PlatformType: waCompanionReg.DeviceProps_CHROME.Enum(),
-	// 改成Android手机版
-	PlatformType: waCompanionReg.DeviceProps_ANDROID_PHONE.Enum(),
+	PlatformType: waCompanionReg.DeviceProps_CHROME.Enum(),
 	// 4
 	RequireFullSync: proto.Bool(false),
 	HistorySyncConfig: &waCompanionReg.DeviceProps_HistorySyncConfig{
@@ -243,6 +240,10 @@ func (device *Device) getRegistrationPayload() *waWa6.ClientPayload {
 func (device *Device) getLoginPayload() *waWa6.ClientPayload {
 	// 注意逻辑：成功关联绑定之前，Passive=true，Lc=0，
 	// 后续登录：Passive=false，Lc就不会是累加的
+
+	// 1. 登录前获取当前 jid 的老 lc
+	currentLc := device.LoginLc
+
 	var passive bool
 	var lc int32
 	// 这里就按是否拿到routingInfo来判断
@@ -251,10 +252,33 @@ func (device *Device) getLoginPayload() *waWa6.ClientPayload {
 		lc = 0
 	} else {
 		passive = false
-		lc = 1
+		// 每次后续登录，在老的基础上 +1
+		lc = currentLc + 1
+		if lc >= 2147483647 {
+			lc = 1
+		}
 	}
 
+	// 更新login lc
+	device.LoginLc = lc
+	_ = device.Container.PutLoginLc(context.Background(), device.ID.User, lc)
+
 	payload := proto.Clone(BaseClientPayload).(*waWa6.ClientPayload)
+
+	if device.ID != nil && device.ID.Device == 0 {
+		// 改成协议号类型,一般都是主设备
+		payload.UserAgent.Platform = waWa6.ClientPayload_UserAgent_ANDROID.Enum()
+		// 改成Android手机版
+		DeviceProps.Os = proto.String("Android")
+		DeviceProps.PlatformType = waCompanionReg.DeviceProps_ANDROID_PHONE.Enum()
+	} else {
+		// 一般都是从设备
+		payload.UserAgent.Platform = waWa6.ClientPayload_UserAgent_WEB.Enum()
+		// 改成Android手机版
+		DeviceProps.Os = proto.String("Windows")
+		DeviceProps.PlatformType = waCompanionReg.DeviceProps_CHROME.Enum()
+	}
+
 	// 1
 	payload.Username = proto.Uint64(device.ID.UserInt())
 	// 3	这里要设置为false，如果为true有时候服务器会缺少一些同步

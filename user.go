@@ -176,7 +176,7 @@ func (cli *Client) SetStatusMessage(ctx context.Context, msg string) error {
 
 // IsOnWhatsApp checks if the given phone numbers are registered on WhatsApp.
 // The phone numbers should be in international format, including the `+` prefix.
-func (cli *Client) IsOnWhatsApp(ctx context.Context, phones []string) ([]types.IsOnWhatsAppResponseNew, error) {
+func (cli *Client) IsOnWhatsApp(ctx context.Context, phones []string) ([]types.IsOnWhatsAppResponse, error) {
 	jids := make([]types.JID, len(phones))
 	for i := range jids {
 		jids[i] = types.NewJID(phones[i], types.LegacyUserServer)
@@ -189,19 +189,15 @@ func (cli *Client) IsOnWhatsApp(ctx context.Context, phones []string) ([]types.I
 	if err != nil {
 		return nil, err
 	}
-	output := make([]types.IsOnWhatsAppResponseNew, 0, len(jids))
+	output := make([]types.IsOnWhatsAppResponse, 0, len(jids))
 	querySuffix := "@" + types.LegacyUserServer
-
-	mappings := make([]store.LIDMapping, 0)
-
 	for _, child := range list.GetChildren() {
 		jid, jidOK := child.Attrs["jid"].(types.JID)
 		if child.Tag != "user" || !jidOK {
 			continue
 		}
-		var info types.IsOnWhatsAppResponseNew
-		info.LID = jid
-		info.JID = child.Attrs["pn_jid"].(types.JID)
+		var info types.IsOnWhatsAppResponse
+		info.JID = jid
 		info.VerifiedName, err = parseVerifiedName(child.GetChildByTag("business"))
 		if err != nil {
 			cli.Log.Warnf("Failed to parse %s's verified name details: %v", jid, err)
@@ -211,19 +207,6 @@ func (cli *Client) IsOnWhatsApp(ctx context.Context, phones []string) ([]types.I
 		contactQuery, _ := contactNode.Content.([]byte)
 		info.Query = strings.TrimSuffix(string(contactQuery), querySuffix)
 		output = append(output, info)
-
-		if !info.LID.IsEmpty() {
-			mappings = append(mappings, store.LIDMapping{PN: info.JID, LID: info.LID})
-		}
-
-		if len(mappings) > 0 {
-			err = cli.Store.LIDs.PutManyLIDMappings(ctx, mappings)
-			if err != nil {
-				// not worth returning on the error, instead just post a log
-				cli.Log.Errorf("Failed to place LID mappings from USync call")
-			}
-		}
-
 	}
 	return output, nil
 }
@@ -236,6 +219,8 @@ func (cli *Client) GetUserInfo(ctx context.Context, jids []types.JID) (map[types
 		{Tag: "picture"},
 		{Tag: "devices", Attrs: waBinary.Attrs{"version": "2"}},
 		{Tag: "lid"},
+	}, UsyncQueryExtras{
+		IncludePrivacyToken: true,
 	})
 	if err != nil {
 		return nil, err
@@ -484,8 +469,6 @@ func (cli *Client) GetUserDevices(ctx context.Context, jids []types.JID) ([]type
 	var devices, jidsToSync, fbJIDsToSync []types.JID
 	for _, jid := range jids {
 		cached, ok := cli.userDevicesCache[jid]
-		// 这里不使用缓存，防止设备同步异常或者延迟的时候加密发送消息，导致解析失败。
-		ok = false
 		if ok && len(cached.devices) > 0 {
 			devices = append(devices, cached.devices...)
 		} else if jid.Server == types.MessengerServer {
@@ -597,10 +580,10 @@ func (cli *Client) GetProfilePictureInfo(ctx context.Context, jid types.JID, par
 		}
 
 		var pictureContent []waBinary.Node
-		if token, _ := cli.Store.PrivacyTokens.GetPrivacyToken(ctx, jid); token != nil {
+		if token, _ := cli.ensureTCToken(ctx, jid); token != nil {
 			pictureContent = []waBinary.Node{{
 				Tag:     "tctoken",
-				Content: token.Token,
+				Content: token,
 			}}
 		}
 
@@ -861,7 +844,8 @@ func (cli *Client) getFBIDDevices(ctx context.Context, jids []types.JID) ([]type
 }
 
 type UsyncQueryExtras struct {
-	BotListInfo []types.BotListInfo
+	BotListInfo         []types.BotListInfo
+	IncludePrivacyToken bool
 }
 
 func (cli *Client) usync(ctx context.Context, jids []types.JID, mode, context string, query []waBinary.Node, extra ...UsyncQueryExtras) (*waBinary.Node, error) {
@@ -904,6 +888,16 @@ func (cli *Client) usync(ctx context.Context, jids []types.JID, mode, context st
 						Attrs: waBinary.Attrs{"persona_id": personaID},
 					}},
 				}}
+			} else if extras.IncludePrivacyToken {
+				token, err := cli.ensureTCToken(ctx, jid)
+				if err != nil {
+					cli.Log.Warnf("Failed to get privacy token for usync status query to %s: %v", jid, err)
+				} else if len(token) > 0 {
+					userList[i].Content = []waBinary.Node{{
+						Tag:     "tctoken",
+						Content: token,
+					}}
+				}
 			}
 		default:
 			return nil, fmt.Errorf("unknown user server '%s'", jid.Server)
