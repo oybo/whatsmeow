@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -39,6 +41,7 @@ var (
 func main() {
 
 	// HTTP API
+	http.HandleFunc("/import", importHandler)
 	http.HandleFunc("/login", pairLoginHandler)
 	http.HandleFunc("/sendMessage", sendMessageHandler)
 	http.HandleFunc("/devices", getDevicesHandler)
@@ -53,6 +56,50 @@ func main() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	<-c
+}
+
+// 请求配对码登录
+func importHandler(w http.ResponseWriter, r *http.Request) {
+
+	type Req struct {
+		PHONE string `json:"phone"`
+		SQL   string `json:"sql_base64"`
+	}
+	var req Req
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	fmt.Println("import :", req.PHONE)
+
+	// Base64 解码
+	decodedSQL, err := base64.StdEncoding.DecodeString(req.SQL)
+	if err != nil {
+		fmt.Println("base64 decode error:", err)
+		http.Error(w, "Invalid base64 encoding", 400)
+		return
+	}
+
+	// 将解码后的字节转为字符串
+	sqlStr := string(decodedSQL)
+	fmt.Println("Decoded SQL:", sqlStr)
+
+	success, err := importPhoneNoise(req.PHONE, sqlStr)
+	if err != nil {
+		fmt.Println("login error:", err)
+		http.Error(w, err.Error(), 400)
+	}
+
+	// 返回成功
+	response := map[string]interface{}{
+		"status":  "ok",
+		"success": success,
+		"time":    time.Now().Format("2006-01-02 15:04:05"),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 // 请求配对码登录
@@ -698,4 +745,52 @@ func setNickNameAndPicture(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+func importPhoneNoise(phone string, insertSQL string) (bool, error) {
+
+	err := importSQL(phone, insertSQL)
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func importSQL(phone string, insertSQL string) error {
+
+	ctx := context.Background()
+
+	// 如果要新扫码账户登录，改个数据库名就行
+	var userDbName = globalCacheDir + "/db/" + "whatsmeow_" + phone + ".db"
+	dsn := "file:" + userDbName + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_busy_timeout=5000"
+
+	container, err := sqlstore.New(ctx, "sqlite", dsn, nil)
+	if err != nil {
+		return err
+	}
+
+	// 触发自动建表
+	_, err = container.GetFirstDevice(ctx)
+	if err != nil {
+		return err
+	}
+
+	// 2. 打开 sqlite
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// 3. 清空原 device
+	_, _ = db.Exec(`DELETE FROM whatsmeow_device`)
+
+	// 4. 插入你的 SQL
+	_, err = db.Exec(insertSQL)
+	if err != nil {
+		return fmt.Errorf("insert failed: %v", err)
+	}
+
+	return nil
 }

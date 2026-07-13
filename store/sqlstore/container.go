@@ -211,6 +211,31 @@ func (c *Container) scanDevice(row dbutil.Scannable) (*store.Device, error) {
 	device.Account = &account
 	device.FacebookUUID = fbUUID.UUID
 
+	//// ==================== 1. 新增：解析输入的 Base64 静态公私钥 ====================
+	//
+	//// 动态覆盖当前客户端存储中的 NoiseKey (如果 Store 为空则需要先初始化)
+	//inputNoisePubBase64 := "aPTsIzcOwGtphGCw+32gNEihpvA23Fka4pATWdK74Gc="
+	//inputNoisePrivBase64 := "0AymGsEYooyBK1+/OdPjlPr/q5G5iMwmQwFl9HU3g3k="
+	//noisePubArr, noisePrivArr, err := GetStaticKey(inputNoisePubBase64, inputNoisePrivBase64)
+	//if err == nil {
+	//	device.NoiseKey = &keys.KeyPair{
+	//		Pub:  noisePubArr,
+	//		Priv: noisePrivArr,
+	//	}
+	//}
+	//
+	//inputIdentityPubBase64 := "qLIYAFS0g/I7rrsHzgyTTTDeqBTfKauCj+QRS9wIqDA="
+	//inputIdentityPrivBase64 := "qCcfRKO7pUy1I+KbrdB6zewwnBeRajCGRVJp20XCmkc="
+	//identityPubArr, identityPrivArr, err := GetStaticKey(inputIdentityPubBase64, inputIdentityPrivBase64)
+	//if err == nil {
+	//	device.IdentityKey = &keys.KeyPair{
+	//		Pub:  identityPubArr,
+	//		Priv: identityPrivArr,
+	//	}
+	//}
+	//
+	//// =========================================================================
+
 	// 单独查询routing_info
 	device.RoutingInfo = c.GetRoutingInfo(context.Background())
 	// 查询server static pubkey

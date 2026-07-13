@@ -872,12 +872,19 @@ func (cli *Client) sendDM(
 		node.Content = append(node.GetChildren(), cli.getMessageReportingToken(messagePlaintext, message, ownID, to, id))
 	}
 
-	if tcToken, err := cli.Store.PrivacyTokens.GetPrivacyToken(ctx, to); err != nil {
-		cli.Log.Warnf("Failed to get privacy token for %s: %v", to, err)
-	} else if tcToken != nil {
+	tcTokenBytes, tcErr := cli.ensureTCToken(ctx, to)
+	if tcErr != nil {
+		cli.Log.Warnf("Failed to get privacy token for %s: %v", to, tcErr)
+	}
+	if len(tcTokenBytes) > 0 {
 		node.Content = append(node.GetChildren(), waBinary.Node{
 			Tag:     "tctoken",
-			Content: tcToken.Token,
+			Content: tcTokenBytes,
+		})
+	} else if csToken := cli.generateCsToken(ctx, to); len(csToken) > 0 {
+		node.Content = append(node.GetChildren(), waBinary.Node{
+			Tag:     "cstoken",
+			Content: csToken,
 		})
 	}
 

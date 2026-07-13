@@ -103,7 +103,8 @@ func SetWAVersion(version WAVersionContainer) {
 var BaseClientPayload = &waWa6.ClientPayload{
 	// 5
 	UserAgent: &waWa6.ClientPayload_UserAgent{
-		Platform:       waWa6.ClientPayload_UserAgent_WEB.Enum(),
+		//Platform:       waWa6.ClientPayload_UserAgent_WEB.Enum(),
+		Platform:       waWa6.ClientPayload_UserAgent_ANDROID.Enum(),
 		AppVersion:     waVersion.ProtoAppVersion(),
 		Mcc:            proto.String("000"),
 		Mnc:            proto.String("000"),
@@ -118,7 +119,8 @@ var BaseClientPayload = &waWa6.ClientPayload{
 	},
 	// 6
 	WebInfo: &waWa6.ClientPayload_WebInfo{
-		WebSubPlatform: waWa6.ClientPayload_WebInfo_WEB_BROWSER.Enum(),
+		//WebSubPlatform: waWa6.ClientPayload_WebInfo_WEB_BROWSER.Enum(),
+		WebSubPlatform: waWa6.ClientPayload_WebInfo_APP_STORE.Enum(),
 	},
 	// 12
 	ConnectType: waWa6.ClientPayload_WIFI_UNKNOWN.Enum(),
@@ -135,8 +137,8 @@ var DeviceProps = &waCompanionReg.DeviceProps{
 	},
 	// 3
 	//PlatformType: waCompanionReg.DeviceProps_CHROME.Enum(),
-	// 改成桌面版
-	PlatformType: waCompanionReg.DeviceProps_UWP.Enum(),
+	// 改成Android手机版
+	PlatformType: waCompanionReg.DeviceProps_ANDROID_PHONE.Enum(),
 	// 4
 	RequireFullSync: proto.Bool(false),
 	HistorySyncConfig: &waCompanionReg.DeviceProps_HistorySyncConfig{
