@@ -85,7 +85,7 @@ func (s *SQLStore) PutIdentity(ctx context.Context, address string, key [32]byte
 }
 
 func (s *SQLStore) DeleteAllIdentities(ctx context.Context, phone string) error {
-	_, err := s.db.Exec(ctx, deleteAllIdentitiesQuery, s.JID, phone+":%")
+	_, err := s.db.Exec(ctx, deleteAllIdentitiesQuery, s.JID, phone+"%")
 	return err
 }
 
@@ -226,17 +226,17 @@ func (s *SQLStore) DeleteAllSessions(ctx context.Context, phone string) error {
 }
 
 func (s *SQLStore) deleteAllSessions(ctx context.Context, phone string) error {
-	_, err := s.db.Exec(ctx, deleteAllSessionsQuery, s.JID, phone+":%")
+	_, err := s.db.Exec(ctx, deleteAllSessionsQuery, s.JID, phone+"%")
 	return err
 }
 
 func (s *SQLStore) deleteAllSenderKeys(ctx context.Context, phone string) error {
-	_, err := s.db.Exec(ctx, deleteAllSenderKeysQuery, s.JID, phone+":%")
+	_, err := s.db.Exec(ctx, deleteAllSenderKeysQuery, s.JID, phone+"%")
 	return err
 }
 
 func (s *SQLStore) deleteAllIdentityKeys(ctx context.Context, phone string) error {
-	_, err := s.db.Exec(ctx, deleteAllIdentityKeysQuery, s.JID, phone+":%")
+	_, err := s.db.Exec(ctx, deleteAllIdentityKeysQuery, s.JID, phone+"%")
 	return err
 }
 

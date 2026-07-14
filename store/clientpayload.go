@@ -268,12 +268,15 @@ func (device *Device) getLoginPayload() *waWa6.ClientPayload {
 	if device.ID != nil && device.ID.Device == 0 {
 		// 改成协议号类型,一般都是主设备
 		payload.UserAgent.Platform = waWa6.ClientPayload_UserAgent_ANDROID.Enum()
+		payload.WebInfo.WebSubPlatform = waWa6.ClientPayload_WebInfo_APP_STORE.Enum()
 		// 改成Android手机版
 		DeviceProps.Os = proto.String("Android")
 		DeviceProps.PlatformType = waCompanionReg.DeviceProps_ANDROID_PHONE.Enum()
 	} else {
 		// 一般都是从设备
 		payload.UserAgent.Platform = waWa6.ClientPayload_UserAgent_WEB.Enum()
+		payload.WebInfo.WebSubPlatform = waWa6.ClientPayload_WebInfo_WEB_BROWSER.Enum()
+
 		// 改成Android手机版
 		DeviceProps.Os = proto.String("Windows")
 		DeviceProps.PlatformType = waCompanionReg.DeviceProps_CHROME.Enum()

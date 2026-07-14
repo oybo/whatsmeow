@@ -199,6 +199,7 @@ type Client struct {
 	mediaHTTP     *http.Client
 	websocketHTTP *http.Client
 	preLoginHTTP  *http.Client
+	WebsocketURL  string
 
 	// This field changes the client to act like a Messenger client instead of a WhatsApp one.
 	//

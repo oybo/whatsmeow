@@ -68,6 +68,10 @@ type QRScannedWithoutMultidevice struct{}
 // at this point, which is why this event doesn't contain any data.
 type Connected struct{}
 
+type RoutingInfo struct {
+	Data []byte
+}
+
 // KeepAliveTimeout is emitted when the keepalive ping request to WhatsApp web servers times out.
 //
 // Currently, there's no automatic handling for these, but it's expected that the TCP connection will
@@ -315,6 +319,8 @@ type Message struct {
 	// The raw message struct. This is the raw unmodified data, which means the actual message might
 	// be wrapped in DeviceSentMessage, EphemeralMessage or ViewOnceMessage.
 	RawMessage *waE2E.Message
+	// XMPP Binary Data
+	Node *waBinary.Node
 }
 
 type FBMessage struct {

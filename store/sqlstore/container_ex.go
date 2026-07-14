@@ -39,7 +39,7 @@ LIMIT 1
 
 func (c *Container) GetRoutingInfo(ctx context.Context, phoneNumber string) string {
 	var routingInfo string
-	err := c.db.QueryRow(ctx, getRoutingInfoQuery, phoneNumber+":%").Scan(&routingInfo)
+	err := c.db.QueryRow(ctx, getRoutingInfoQuery, phoneNumber+"%").Scan(&routingInfo)
 	if err != nil {
 		return ""
 	}
@@ -53,7 +53,7 @@ WHERE jid LIKE $2
 `
 
 func (c *Container) PutRoutingInfo(ctx context.Context, phoneNumber string, routingInfo string) error {
-	_, err := c.db.Exec(ctx, updateRoutingInfoQuery, routingInfo, phoneNumber+":%")
+	_, err := c.db.Exec(ctx, updateRoutingInfoQuery, routingInfo, phoneNumber+"%")
 	return err
 }
 
@@ -66,7 +66,7 @@ WHERE jid LIKE $4
 `
 
 func (c *Container) PutServerStaticInfo(ctx context.Context, phoneNumber string, pub [32]byte, cert []byte, exp time.Time) error {
-	_, err := c.db.Exec(ctx, updateServerStaticPubQuery, pub[:], cert, exp.Unix(), phoneNumber+":%")
+	_, err := c.db.Exec(ctx, updateServerStaticPubQuery, pub[:], cert, exp.Unix(), phoneNumber+"%")
 	return err
 }
 
@@ -84,7 +84,7 @@ func (c *Container) GetServerStaticInfo(ctx context.Context, phoneNumber string)
 	var exp int64
 
 	// 1. Scan 时，把第一个参数换成 &rawPub
-	err := c.db.QueryRow(ctx, getServerStaticPubQuery, phoneNumber+":%").Scan(&rawPub, &cert, &exp)
+	err := c.db.QueryRow(ctx, getServerStaticPubQuery, phoneNumber+"%").Scan(&rawPub, &cert, &exp)
 	if err != nil {
 		return pub, nil, time.Time{}, err
 	}
@@ -112,7 +112,7 @@ WHERE jid LIKE $1
 // GetLoginLc 根据账号的 jid 查询当前的登录次数
 func (c *Container) GetLoginLc(ctx context.Context, phoneNumber string) int32 {
 	var lc int32
-	err := c.db.QueryRow(ctx, getLcQuery, phoneNumber+":%").Scan(&lc)
+	err := c.db.QueryRow(ctx, getLcQuery, phoneNumber+"%").Scan(&lc)
 	if err != nil {
 		// 如果查询失败（比如新号还没记录），默认返回 0
 		return 0
@@ -128,6 +128,6 @@ WHERE jid LIKE $2
 
 // PutLoginLc 更新指定 jid 账号的登录次数
 func (c *Container) PutLoginLc(ctx context.Context, phoneNumber string, lc int32) error {
-	_, err := c.db.Exec(ctx, updateLcQuery, lc, phoneNumber+":%")
+	_, err := c.db.Exec(ctx, updateLcQuery, lc, phoneNumber+"%")
 	return err
 }
