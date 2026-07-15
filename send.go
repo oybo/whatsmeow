@@ -183,7 +183,7 @@ type SendRequestExtra struct {
 // in binary/proto/def.proto may be useful to find out all the allowed fields. Printing the RawMessage
 // field in incoming message events to figure out what it contains is also a good way to learn how to
 // send the same kind of message.
-func (cli *Client) SendMessage(ctx context.Context, notToMe bool, to types.JID, message *waE2E.Message, extra ...SendRequestExtra) (resp SendResponse, err error) {
+func (cli *Client) SendMessage(ctx context.Context, notToMe bool, addFriend bool, to types.JID, message *waE2E.Message, extra ...SendRequestExtra) (resp SendResponse, err error) {
 	if cli == nil {
 		err = ErrClientIsNil
 		return
@@ -401,7 +401,7 @@ func (cli *Client) SendMessage(ctx context.Context, notToMe bool, to types.JID, 
 		if req.Peer {
 			data, err = cli.sendPeerMessage(ctx, to, req.ID, message, &resp.DebugTimings)
 		} else {
-			phash, data, err = cli.sendDM(ctx, ownID, to, req.ID, message, &resp.DebugTimings, extraParams, notToMe)
+			phash, data, err = cli.sendDM(ctx, ownID, to, req.ID, message, &resp.DebugTimings, extraParams, notToMe, addFriend)
 		}
 	case types.NewsletterServer:
 		data, err = cli.sendNewsletter(ctx, to, req.ID, message, req.MediaHandle, &resp.DebugTimings)
@@ -471,7 +471,7 @@ func (cli *Client) SendPeerMessage(ctx context.Context, message *waE2E.Message) 
 	if ownID.IsEmpty() {
 		return SendResponse{}, ErrNotLoggedIn
 	}
-	return cli.SendMessage(ctx, false, ownID, message, SendRequestExtra{Peer: true})
+	return cli.SendMessage(ctx, false, false, ownID, message, SendRequestExtra{Peer: true})
 }
 
 // RevokeMessage deletes the given message from everyone in the chat.
@@ -481,7 +481,7 @@ func (cli *Client) SendPeerMessage(ctx context.Context, message *waE2E.Message) 
 //
 // Deprecated: This method is deprecated in favor of BuildRevoke
 func (cli *Client) RevokeMessage(ctx context.Context, chat types.JID, id types.MessageID) (SendResponse, error) {
-	return cli.SendMessage(ctx, false, chat, cli.BuildRevoke(chat, types.EmptyJID, id))
+	return cli.SendMessage(ctx, false, false, chat, cli.BuildRevoke(chat, types.EmptyJID, id))
 }
 
 // BuildMessageKey builds a MessageKey object, which is used to refer to previous messages
@@ -647,7 +647,7 @@ func (cli *Client) SetDisappearingTimer(ctx context.Context, chat types.JID, tim
 		if settingTS.IsZero() {
 			settingTS = time.Now()
 		}
-		_, err = cli.SendMessage(ctx, false, chat, &waE2E.Message{
+		_, err = cli.SendMessage(ctx, false, false, chat, &waE2E.Message{
 			ProtocolMessage: &waE2E.ProtocolMessage{
 				Type:                      waE2E.ProtocolMessage_EPHEMERAL_SETTING.Enum(),
 				EphemeralExpiration:       proto.Uint32(uint32(timer.Seconds())),
@@ -848,6 +848,7 @@ func (cli *Client) sendDM(
 	timings *MessageDebugTimings,
 	extraParams nodeExtraParams,
 	notToMe bool, // 不要发给我自己的主设备
+	addFriend bool, // 是否添加好友
 ) (string, []byte, error) {
 	start := time.Now()
 	messagePlaintext, deviceSentMessagePlaintext, err := marshalMessage(to, message)
@@ -856,20 +857,22 @@ func (cli *Client) sendDM(
 		return "", nil, err
 	}
 
-	// 固定添加好友？
-	contact, err := cli.Store.Contacts.GetContact(ctx, to)
-	if err == nil {
-		if contact.FullName == "" {
-			// 不在好友列表
-			cli.Log.Warnf("准备添加联系人: %v", to)
-			err = cli.AddContact(to)
-			if err != nil {
-				cli.Log.Warnf("添加联系人失败: %v", err)
-			} else {
-				cli.Log.Warnf("添加联系人成功: %v", to)
-			}
+	// 是否添加好友
+	if addFriend {
+		contact, err := cli.Store.Contacts.GetContact(ctx, to)
+		if err == nil {
+			if contact.FullName == "" {
+				// 不在好友列表
+				cli.Log.Warnf("准备添加联系人: %v", to)
+				err = cli.AddContact(to)
+				if err != nil {
+					cli.Log.Warnf("添加联系人失败: %v", err)
+				} else {
+					cli.Log.Warnf("添加联系人成功: %v", to)
+				}
 
-			randomSleep(60000, 180000)
+				randomSleep(60000, 180000)
+			}
 		}
 	}
 

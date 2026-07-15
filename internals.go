@@ -680,7 +680,7 @@ func (int *DangerousInternalClient) SendPeerMessage(ctx context.Context, to type
 }
 
 func (int *DangerousInternalClient) SendDM(ctx context.Context, ownID, to types.JID, id types.MessageID, message *waE2E.Message, timings *MessageDebugTimings, extraParams nodeExtraParams) (string, []byte, error) {
-	return int.c.sendDM(ctx, ownID, to, id, message, timings, extraParams, false)
+	return int.c.sendDM(ctx, ownID, to, id, message, timings, extraParams, false, false)
 }
 
 func (int *DangerousInternalClient) PreparePeerMessageNode(ctx context.Context, to types.JID, id types.MessageID, message *waE2E.Message, timings *MessageDebugTimings) (*waBinary.Node, error) {
