@@ -921,6 +921,9 @@ func (cli *Client) sendDM(
 		types.ChatPresenceMediaText,
 	)
 
+	// 发送消息前随机抖动
+	randomSleep(60000, 180000)
+
 	participants := []types.JID{to, ownID.ToNonAD()}
 	if notToMe {
 		participants = []types.JID{to}
