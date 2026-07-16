@@ -47,20 +47,21 @@ func (cli *Client) doConnectHandshake(ctx context.Context, fs *socket.FrameSocke
 
 	// 优先尝试 IK 模式握手
 	if cli.shouldUseIKHandshake() {
-		fmt.Println("doIKHandshake")
+		cli.Log.Debugf("doIKHandshake")
 
 		// 传入本次连接随机生成的临时密钥对 ephemeralKP，本地静态密钥内部会自动读取
 		err := cli.doIKHandshake(ctx, fs, ephemeralKP, cli.Store.ServerStaticKey)
 		if err == nil {
-			fmt.Println("IK 模式恢复连接成功")
+			cli.Log.Debugf("IK 模式恢复连接成功")
 			return nil
 		}
 
 		// 如果 IK 失败，直接返回错误，交由上层 unlockedConnect 触发网络重连和切换 XX 模式
+		cli.Log.Debugf("IK handshake failed: %v", err)
 		return fmt.Errorf("IK handshake failed: %w", err)
 	}
 
-	fmt.Println("doXXHandshake")
+	cli.Log.Debugf("doXXHandshake")
 	return cli.doXXHandshake(ctx, fs, ephemeralKP)
 }
 

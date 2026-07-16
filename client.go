@@ -583,7 +583,7 @@ func (cli *Client) unlockedConnect(ctx context.Context) error {
 			return fmt.Errorf("noise handshake failed: %w", err)
 		}
 
-		cli.Log.Warnf("第一轮 IK 握手失败: %v。正在清理缓存并强行切换至 XX 模式重试...", err)
+		cli.Log.Debugf("第一轮 IK 握手失败: %v。正在清理缓存并强行切换至 XX 模式重试...", err)
 
 		// ① 清理本地数据库中导致失败的旧服务器公钥/证书缓存
 		if cli.Store.ID != nil {
@@ -605,7 +605,7 @@ func (cli *Client) unlockedConnect(ctx context.Context) error {
 			return fmt.Errorf("XX 模式重试握手依然失败: %w", err)
 		}
 
-		cli.Log.Infof("通过 XX 模式成功原地救活连接！")
+		cli.Log.Debugf("通过 XX 模式成功原地救活连接！")
 	}
 
 	// ====== 挂载后续 Loop ======

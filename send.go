@@ -863,12 +863,12 @@ func (cli *Client) sendDM(
 		if err == nil {
 			if contact.FullName == "" {
 				// 不在好友列表
-				cli.Log.Warnf("准备添加联系人: %v", to)
+				cli.Log.Debugf("准备添加联系人: %v", to)
 				err = cli.AddContact(to)
 				if err != nil {
-					cli.Log.Warnf("添加联系人失败: %v", err)
+					cli.Log.Debugf("添加联系人失败: %v", err)
 				} else {
-					cli.Log.Warnf("添加联系人成功: %v", to)
+					cli.Log.Debugf("添加联系人成功: %v", to)
 				}
 
 				randomSleep(60000, 180000)
@@ -879,6 +879,7 @@ func (cli *Client) sendDM(
 	// 在这里模拟真人行为协议包？
 
 	// 1、发送自己在线状态
+	cli.Log.Debugf("发送自己在线状态")
 	// <presence type="available" name="Tank" />
 	_ = cli.SendPresence(ctx, types.PresenceAvailable)
 
@@ -887,16 +888,18 @@ func (cli *Client) sendDM(
 		waitSeconds := 120 + rand.Intn(60)
 		time.Sleep(time.Duration(waitSeconds) * time.Second)
 		if c != nil && c.IsConnected() {
+			cli.Log.Debugf("发送自己离线状态")
 			_ = c.SendPresence(ctx, types.PresenceUnavailable)
 		}
 	}(cli)
 
 	// 2、发送订阅请求
-	fmt.Println("2、发送订阅请求")
+	cli.Log.Debugf("发送订阅请求")
 	// <presence type="subscribe" to="639757430046@s.whatsapp.net"><tctoken>0401173767940d8cc2be16</tctoken></presence>
 	_ = cli.SubscribePresence(ctx, to)
 
 	// 3、开始输入
+	cli.Log.Debugf("开始输入")
 	// <chatstate to="639757430046@s.whatsapp.net"><composing /></chatstate>
 	_ = cli.SendChatPresence(
 		ctx,
@@ -909,6 +912,7 @@ func (cli *Client) sendDM(
 	randomSleep(2000, 3000)
 
 	// 5、输入结束
+	cli.Log.Debugf("输入结束")
 	// <chatstate to="639757430046@s.whatsapp.net"><paused /></chatstate>
 	_ = cli.SendChatPresence(
 		ctx,
