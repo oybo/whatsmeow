@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/rand"
 	"slices"
 	"sort"
 	"strconv"
@@ -189,19 +190,23 @@ type HumanBehaviorConfig struct {
 // 这些行为原来是硬编码在 DM 发送流程里的，现在改为显式传入才启用。
 func DefaultHumanBehaviorConfig() *HumanBehaviorConfig {
 	return &HumanBehaviorConfig{
-		Enabled:            true,
-		SendOnline:         true,
-		SendOfflineAfter:   true,
-		OfflineAfterMin:    2 * time.Minute,
-		OfflineAfterMax:    3 * time.Minute,
-		SubscribePresence:  true,
-		SendTyping:         true,
-		TypingDelayMin:     2 * time.Second,
-		TypingDelayMax:     3 * time.Second,
-		SendDelayMin:       time.Minute,
-		SendDelayMax:       3 * time.Minute,
+		Enabled:    true,
+		SendOnline: true,
+		// 发送离线状态时间 2-3分组
+		SendOfflineAfter:  true,
+		OfflineAfterMin:   2 * time.Minute,
+		OfflineAfterMax:   3 * time.Minute,
+		SubscribePresence: true,
+		// 发送正在输入 2-3秒
+		SendTyping:     true,
+		TypingDelayMin: 2 * time.Second,
+		TypingDelayMax: 3 * time.Second,
+		// 发送消息前的随机延迟 1-2分钟
+		SendDelayMin: time.Minute,
+		SendDelayMax: 2 * time.Minute,
+		// 发送消息前添加联系人的随机延迟 1-2分钟
 		AddContactDelayMin: time.Minute,
-		AddContactDelayMax: 3 * time.Minute,
+		AddContactDelayMax: 2 * time.Minute,
 	}
 }
 
@@ -1230,7 +1235,61 @@ func (cli *Client) getMessageContent(
 			}},
 		})
 	}
+
+	// 对于 ViewOnceMessage 这种类型 message，必须加上这段东西才正常
+	// <biz actual_actors="2" host_storage="2" privacy_mode_ts="1700600443">
+	//      <interactive type="native_flow" v="1">
+	//			<native_flow name="mixed" v="9"/>
+	//	  	</interactive>
+	//	  	<quality_control source_type="third_party"/>
+	//   </biz>
+
+	if message.ViewOnceMessage != nil {
+		content = append(content, waBinary.Node{
+			Tag: "biz",
+			Attrs: waBinary.Attrs{
+				"actual_actors":   "2",
+				"host_storage":    "2",
+				"privacy_mode_ts": randomPrivacyModeTS(),
+			},
+			Content: []waBinary.Node{{
+				Tag: "interactive",
+				Attrs: waBinary.Attrs{
+					"type": "native_flow",
+					"v":    "1",
+				},
+				Content: []waBinary.Node{{
+					Tag: "native_flow",
+					Attrs: waBinary.Attrs{
+						"name": "mixed",
+						"v":    "9",
+					},
+				}},
+			}, {
+				Tag: "quality_control",
+				Attrs: waBinary.Attrs{
+					"source_type": "third_party",
+				},
+			}},
+		})
+
+		// <bot biz_bot="1"/>
+		content = append(content, waBinary.Node{
+			Tag: "bot",
+			Attrs: waBinary.Attrs{
+				"biz_bot": "1",
+			},
+		})
+	}
+
 	return content
+}
+
+func randomPrivacyModeTS() string {
+	base := int64(1700600443)
+	// 上下浮动 6 小时（-6h ~ +6h）
+	offset := rand.Int63n(12*3600) - 6*3600
+	return strconv.FormatInt(base+offset, 10)
 }
 
 func (cli *Client) prepareMessageNode(
