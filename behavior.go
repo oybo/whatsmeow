@@ -117,32 +117,54 @@ func (cli *Client) runPreSendHumanBehavior(ctx context.Context, to types.JID, cf
 
 func (cli *Client) maybeAutoReadMessage(ctx context.Context, evt *events.Message) {
 	cfg := cli.AutoReceipt
-	if !cfg.Enabled || evt == nil || evt.Info.IsFromMe {
+	if evt == nil {
+		return
+	}
+	if !cfg.Enabled {
+		cli.Log.Debugf("自动回执未启用，跳过消息 %s", evt.Info.ID)
+		return
+	}
+	if evt.Info.IsFromMe {
+		cli.Log.Debugf("消息 %s 是自己发送的，跳过自动回执", evt.Info.ID)
 		return
 	}
 	if evt.Info.IsGroup && !cfg.IncludeGroups {
+		cli.Log.Debugf("消息 %s 是群消息且 IncludeGroups=false，跳过自动回执", evt.Info.ID)
 		return
 	}
 	if !cfg.SendRead && !cfg.SubscribePresence {
+		cli.Log.Debugf("消息 %s 的自动回执配置没有开启已读或 presence 订阅，跳过", evt.Info.ID)
 		return
 	}
+	cli.Log.Debugf("消息 %s 已加入自动回执流程，chat=%s sender=%s", evt.Info.ID, evt.Info.Chat, evt.Info.Sender)
 	go cli.autoReadMessage(context.WithoutCancel(ctx), cfg, evt)
 }
 
 func (cli *Client) autoReadMessage(ctx context.Context, cfg AutoReceiptConfig, evt *events.Message) {
 	info := evt.Info
 	if cfg.SubscribePresence && !info.Chat.IsEmpty() && !info.IsGroup {
+		cli.Log.Debugf("自动回执：准备订阅 %s 的 presence", info.Chat)
 		if err := cli.SubscribePresence(ctx, info.Chat); err != nil {
 			cli.Log.Debugf("自动回执：订阅 %s 的 presence 失败: %v", info.Chat, err)
+		} else {
+			cli.Log.Debugf("自动回执：订阅 %s 的 presence 成功", info.Chat)
 		}
 	}
 	if !cfg.SendRead {
 		return
 	}
-	if err := cli.sleepHumanDelay(ctx, "发送已读回执前", cfg.ReadDelayMin, cfg.ReadDelayMax); err != nil {
+	delay := randomDuration(cfg.ReadDelayMin, cfg.ReadDelayMax)
+	if delay > 0 {
+		cli.Log.Debugf("自动回执：消息 %s 将在 %s 后发送已读", info.ID, delay)
+	}
+	if err := sleepWithContext(ctx, delay); err != nil {
+		cli.Log.Debugf("自动回执：消息 %s 等待发送已读时被取消: %v", info.ID, err)
 		return
 	}
+	cli.Log.Debugf("自动回执：准备标记消息 %s 为已读，chat=%s sender=%s", info.ID, info.Chat, info.Sender)
 	if err := cli.MarkRead(ctx, []types.MessageID{info.ID}, time.Now(), info.Chat, info.Sender); err != nil {
 		cli.Log.Debugf("自动回执：标记消息 %s 为已读失败: %v", info.ID, err)
+	} else {
+		cli.Log.Debugf("自动回执：标记消息 %s 为已读成功", info.ID)
 	}
 }
