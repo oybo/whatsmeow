@@ -24,7 +24,13 @@ CREATE TABLE whatsmeow_device (
 	business_name TEXT NOT NULL DEFAULT '',
 	push_name     TEXT NOT NULL DEFAULT '',
 
-	lid_migration_ts BIGINT NOT NULL DEFAULT 0
+	lid_migration_ts BIGINT NOT NULL DEFAULT 0,
+
+	routing_info      TEXT NOT NULL DEFAULT '',
+	server_static_pub bytea,
+	certificate_chain bytea,
+	cert_expires_at   BIGINT,
+	lc                INT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE whatsmeow_identity_keys (

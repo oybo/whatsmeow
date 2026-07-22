@@ -1104,7 +1104,12 @@ func (cli *Client) handleDecryptedMessage(ctx context.Context, info *types.Messa
 		return false
 	}
 	evt := &events.Message{Info: *info, RawMessage: msg, RetryCount: retryCount}
-	return cli.dispatchEvent(evt.UnwrapRaw())
+	evt = evt.UnwrapRaw()
+	handlerFailed = cli.dispatchEvent(evt)
+	if !handlerFailed {
+		cli.maybeAutoReadMessage(ctx, evt)
+	}
+	return handlerFailed
 }
 
 // SendProtocolMessageReceipt sends a receipt for a protocol message back to the phone.

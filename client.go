@@ -18,7 +18,6 @@ import (
 	"net/url"
 	"runtime/debug"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,7 +28,6 @@ import (
 	"go.mau.fi/util/random"
 	"golang.org/x/net/proxy"
 	"golang.org/x/sync/semaphore"
-	"math/rand"
 
 	"go.mau.fi/whatsmeow/appstate"
 	waBinary "go.mau.fi/whatsmeow/binary"
@@ -184,6 +182,9 @@ type Client struct {
 
 	// Should SubscribePresence return an error if no privacy token is stored for the user?
 	ErrorOnSubscribePresenceWithoutToken bool
+
+	// AutoReceipt controls optional automatic read receipts and presence subscriptions for incoming messages.
+	AutoReceipt AutoReceiptConfig
 
 	SendReportingTokens bool
 
@@ -562,7 +563,7 @@ func (cli *Client) unlockedConnect(ctx context.Context) error {
 		client = cli.preLoginHTTP
 	}
 
-	// 在url的后面拼接routing_info
+	// 如果有缓存的 routing_info，就拼接到 websocket URL 后面。
 	routing_info := cli.Store.RoutingInfo
 	if routing_info != "" {
 		routing_info = "?ED=" + routing_info
@@ -574,41 +575,37 @@ func (cli *Client) unlockedConnect(ctx context.Context) error {
 		return err
 	}
 
-	// 执行第一轮握手
 	if err := cli.doConnectHandshake(ctx, fs, *keys.NewKeyPair()); err != nil {
-		fs.Close(0) // 彻底关闭第一轮那条已经损坏的旧连接
-
-		// 检查是否具备从 IK 切换到 XX 的条件
+		fs.Close(0)
+		// 只有当前确实走的是 IK 握手时，才需要清理缓存并回退到 XX。
 		if !cli.shouldUseIKHandshake() {
 			return fmt.Errorf("noise handshake failed: %w", err)
 		}
 
-		cli.Log.Debugf("第一轮 IK 握手失败: %v。正在清理缓存并强行切换至 XX 模式重试...", err)
+		cli.Log.Debugf("IK 握手失败，正在清理缓存的服务端静态信息并回退到 XX 重试: %v", err)
 
-		// ① 清理本地数据库中导致失败的旧服务器公钥/证书缓存
+		// 清理本地缓存的服务端静态公钥/证书，避免下次继续使用失效 IK 数据。
 		if cli.Store.ID != nil {
 			_ = cli.Store.Container.PutServerStaticInfo(ctx, cli.Store.ID.User, [32]byte{}, nil, time.Time{})
 			cli.Store.ServerStaticKey = [32]byte{}
 			cli.Store.CertificateChain = nil
 		}
 
-		// ② 再次复用 newFrameSocket 建立第二轮【干净】的 WebSocket 连接
+		// 重新建立一条干净的 websocket 连接，再走一次握手。
 		fs = cli.newFrameSocket(client, routing_info)
 		if err = fs.Connect(ctx); err != nil {
 			fs.Close(0)
-			return fmt.Errorf("IK 失败后重连 WebSocket 失败: %w", err)
+			return fmt.Errorf("IK 失败后重新连接 websocket 失败: %w", err)
 		}
 
-		// ③ 在新连接上再次握手（此时由于清空了缓存，百分之百走 doXXHandshake）
 		if err = cli.doConnectHandshake(ctx, fs, *keys.NewKeyPair()); err != nil {
 			fs.Close(0)
-			return fmt.Errorf("XX 模式重试握手依然失败: %w", err)
+			return fmt.Errorf("XX 重试握手失败: %w", err)
 		}
 
-		cli.Log.Debugf("通过 XX 模式成功原地救活连接！")
+		cli.Log.Debugf("IK 失败后已通过 XX 握手恢复连接")
 	}
 
-	// ====== 挂载后续 Loop ======
 	go cli.keepAliveLoop(ctx, fs.Context())
 	go cli.handlerQueueLoop(ctx, fs.Context())
 	return nil
@@ -888,63 +885,7 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 		// handled
 	} else if _, ok := cli.nodeHandlers[node.Tag]; ok {
 
-		// 处理接收消息后回复<receipt，但是这里要排除<message category="peer"类型的消息 以及 自己设备发的消息
-		if node.Tag == "message" {
-			_, hasCategory := node.Attrs["category"]
-			// 1、不带category才走判断
-			if !hasCategory {
-				// 2. from里是自己的jid或者lid，一般情况 recipient有值的是自己账号发送的消息，不带recipient的为自己接收的消息
-				recipient, ok := node.Attrs["recipient"]
-				var isFromMeMsg bool
-				if ok && recipient != "" {
-					from := node.Attrs["from"]
-					msgFromNumber := normalizeJid(fmt.Sprintf("%v", from))
-					myJidNumber := normalizeJid(cli.getOwnID().String())
-					myLidNumber := normalizeJid(cli.getOwnLID().String())
-					// 是否是自己设备发出去的消息
-					isFromMeMsg = msgFromNumber == myJidNumber || msgFromNumber == myLidNumber
-					fmt.Printf("是否该账户下关联设备发送的消息：%v \n", isFromMeMsg)
-				}
-				if !isFromMeMsg {
-					msg_id := node.Attrs["id"]
-					msg_from := node.Attrs["from"]
-					jid, _ := toJID(msg_from)
-
-					// 应该在收到消息的时候发送一个接收到的回执
-					// <receipt id="ACEFAAB0CDA7505946A0BBD806A876BC" to="30095439847465@lid" />
-					err = cli.sendNode(ctx, waBinary.Node{
-						Tag: "receipt",
-						Attrs: waBinary.Attrs{
-							"id": msg_id,
-							"to": jid,
-						},
-					})
-
-					go func() {
-						// 延迟1 - 2 秒
-						randomSleep(30000, 60000)
-
-						// 2、发送订阅请求
-						_ = cli.SubscribePresence(ctx, jid)
-
-						// 发送已阅读
-						//<receipt to="69080975409156@lid" type="read" id="ACB2E07F794D9C020A6970D892FEBEDC" t="1778819090297" sts="1778818703000509" />
-						err = cli.sendNode(ctx, waBinary.Node{
-							Tag: "receipt",
-							Attrs: waBinary.Attrs{
-								"to":   msg_from,
-								"type": "read",
-								"id":   msg_id,
-								"t":    time.Now().Unix(),
-							},
-						})
-
-					}()
-				}
-			}
-		}
-
-		// 在这里做存储routing_info
+		// 在这里存储 routing_info，后续 websocket 连接可以直接复用。
 		if node.Tag == "ib" {
 			for _, child := range node.GetChildren() {
 				if child.Tag != "edge_routing" {
@@ -956,11 +897,10 @@ func (cli *Client) handleFrame(ctx context.Context, data []byte) {
 				}
 				data, ok := routingNode.Content.([]byte)
 				if !ok {
-					fmt.Printf("unexpected type: %T\n", routingNode.Content)
+					cli.Log.Warnf("routing_info 内容类型异常: %T", routingNode.Content)
 					continue
 				}
 				b64 := base64.StdEncoding.EncodeToString(data)
-				// 保存
 				_ = cli.Store.Container.PutRoutingInfo(ctx, cli.Store.ID.User, b64)
 				break
 			}
@@ -1175,48 +1115,4 @@ func (cli *Client) sendUnifiedSession() {
 	if err != nil {
 		cli.Log.Debugf("Failed to send unified_session telemetry: %v", err)
 	}
-}
-
-// 去掉 jid 的 :device 后缀，例如 "8618...20:18@s.whatsapp.net" → "8618...20:16@s.whatsapp.net"
-func normalizeJid(j string) string {
-	parts := strings.Split(j, "@")
-	if len(parts) != 2 {
-		return j
-	}
-	// 去掉 device
-	user := strings.Split(parts[0], ":")[0]
-	return user + "@" + parts[1]
-}
-
-func toJID(v any) (types.JID, error) {
-	switch x := v.(type) {
-	case string:
-		return types.ParseJID(x)
-	case []byte:
-		return types.ParseJID(string(x))
-	case fmt.Stringer:
-		return types.ParseJID(x.String())
-	case types.JID:
-		return x, nil
-	default:
-		return types.JID{}, fmt.Errorf("invalid jid type: %T", v)
-	}
-}
-
-// 生成指定范围内的随机延迟
-func randomMilliseconds(min, max int) time.Duration {
-	if min >= max {
-		return time.Duration(min) * time.Millisecond
-	}
-	// 使用当前时间作为随机种子
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	delay := r.Intn(max-min+1) + min
-	return time.Duration(delay) * time.Millisecond
-}
-
-// 随机延迟函数	随机延迟min - max 毫秒
-func randomSleep(minMs, maxMs int) {
-	delay := randomMilliseconds(minMs, maxMs)
-	fmt.Printf("随机延迟: %v\n", delay)
-	time.Sleep(delay)
 }

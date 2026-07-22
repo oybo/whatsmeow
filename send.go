@@ -14,7 +14,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"math/rand"
 	"slices"
 	"sort"
 	"strconv"
@@ -155,8 +154,55 @@ type SendRequestExtra struct {
 	MediaHandle string
 
 	Meta *types.MsgMetaInfo
+	// NotToMe 表示 DM 发送时不再额外发一份给自己的主设备。
+	NotToMe bool
+	// AddFriend 表示发送 DM 前，如果对方还不是联系人，就先添加联系人。
+	AddFriend bool
+	// HumanBehavior 控制发送 DM 前是否模拟真人协议行为，比如在线、订阅 presence、输入中和随机延迟。
+	HumanBehavior *HumanBehaviorConfig
 	// use this only if you know what you are doing
 	AdditionalNodes *[]waBinary.Node
+}
+
+// HumanBehaviorConfig 控制发送 DM 前可选的模拟真人协议行为。
+//
+// 如果需要启用，可以先用 DefaultHumanBehaviorConfig 生成默认配置，再按业务调整。
+type HumanBehaviorConfig struct {
+	Enabled bool
+
+	SendOnline       bool
+	SendOfflineAfter bool
+	OfflineAfterMin  time.Duration
+	OfflineAfterMax  time.Duration
+
+	SubscribePresence  bool
+	SendTyping         bool
+	TypingDelayMin     time.Duration
+	TypingDelayMax     time.Duration
+	SendDelayMin       time.Duration
+	SendDelayMax       time.Duration
+	AddContactDelayMin time.Duration
+	AddContactDelayMax time.Duration
+}
+
+// DefaultHumanBehaviorConfig 返回一组相对保守的模拟真人行为配置。
+// 这些行为原来是硬编码在 DM 发送流程里的，现在改为显式传入才启用。
+func DefaultHumanBehaviorConfig() *HumanBehaviorConfig {
+	return &HumanBehaviorConfig{
+		Enabled:            true,
+		SendOnline:         true,
+		SendOfflineAfter:   true,
+		OfflineAfterMin:    2 * time.Minute,
+		OfflineAfterMax:    3 * time.Minute,
+		SubscribePresence:  true,
+		SendTyping:         true,
+		TypingDelayMin:     2 * time.Second,
+		TypingDelayMax:     3 * time.Second,
+		SendDelayMin:       time.Minute,
+		SendDelayMax:       3 * time.Minute,
+		AddContactDelayMin: time.Minute,
+		AddContactDelayMax: 3 * time.Minute,
+	}
 }
 
 // SendMessage sends the given message.
@@ -183,7 +229,7 @@ type SendRequestExtra struct {
 // in binary/proto/def.proto may be useful to find out all the allowed fields. Printing the RawMessage
 // field in incoming message events to figure out what it contains is also a good way to learn how to
 // send the same kind of message.
-func (cli *Client) SendMessage(ctx context.Context, notToMe bool, addFriend bool, to types.JID, message *waE2E.Message, extra ...SendRequestExtra) (resp SendResponse, err error) {
+func (cli *Client) SendMessage(ctx context.Context, to types.JID, message *waE2E.Message, extra ...SendRequestExtra) (resp SendResponse, err error) {
 	if cli == nil {
 		err = ErrClientIsNil
 		return
@@ -401,7 +447,7 @@ func (cli *Client) SendMessage(ctx context.Context, notToMe bool, addFriend bool
 		if req.Peer {
 			data, err = cli.sendPeerMessage(ctx, to, req.ID, message, &resp.DebugTimings)
 		} else {
-			phash, data, err = cli.sendDM(ctx, ownID, to, req.ID, message, &resp.DebugTimings, extraParams, notToMe, addFriend)
+			phash, data, err = cli.sendDM(ctx, ownID, to, req.ID, message, &resp.DebugTimings, extraParams, req.NotToMe, req.AddFriend, req.HumanBehavior)
 		}
 	case types.NewsletterServer:
 		data, err = cli.sendNewsletter(ctx, to, req.ID, message, req.MediaHandle, &resp.DebugTimings)
@@ -471,7 +517,7 @@ func (cli *Client) SendPeerMessage(ctx context.Context, message *waE2E.Message) 
 	if ownID.IsEmpty() {
 		return SendResponse{}, ErrNotLoggedIn
 	}
-	return cli.SendMessage(ctx, false, false, ownID, message, SendRequestExtra{Peer: true})
+	return cli.SendMessage(ctx, ownID, message, SendRequestExtra{Peer: true})
 }
 
 // RevokeMessage deletes the given message from everyone in the chat.
@@ -481,7 +527,7 @@ func (cli *Client) SendPeerMessage(ctx context.Context, message *waE2E.Message) 
 //
 // Deprecated: This method is deprecated in favor of BuildRevoke
 func (cli *Client) RevokeMessage(ctx context.Context, chat types.JID, id types.MessageID) (SendResponse, error) {
-	return cli.SendMessage(ctx, false, false, chat, cli.BuildRevoke(chat, types.EmptyJID, id))
+	return cli.SendMessage(ctx, chat, cli.BuildRevoke(chat, types.EmptyJID, id))
 }
 
 // BuildMessageKey builds a MessageKey object, which is used to refer to previous messages
@@ -523,7 +569,7 @@ func (cli *Client) BuildRevoke(chat, sender types.JID, id types.MessageID) *waE2
 // BuildReaction builds a message reaction message using the given variables.
 // The built message can be sent normally using Client.SendMessage.
 //
-//	resp, err := cli.SendMessage(context.Background(), chat, cli.BuildReaction(chat, senderJID, targetMessageID, "🐈️")
+//	resp, err := cli.SendMessage(context.Background(), chat, cli.BuildReaction(chat, senderJID, targetMessageID, "+1"))
 //
 // Note that for newsletter messages, you need to use NewsletterSendReaction instead of BuildReaction + SendMessage.
 func (cli *Client) BuildReaction(chat, sender types.JID, id types.MessageID, reaction string) *waE2E.Message {
@@ -647,7 +693,7 @@ func (cli *Client) SetDisappearingTimer(ctx context.Context, chat types.JID, tim
 		if settingTS.IsZero() {
 			settingTS = time.Now()
 		}
-		_, err = cli.SendMessage(ctx, false, false, chat, &waE2E.Message{
+		_, err = cli.SendMessage(ctx, chat, &waE2E.Message{
 			ProtocolMessage: &waE2E.ProtocolMessage{
 				Type:                      waE2E.ProtocolMessage_EPHEMERAL_SETTING.Enum(),
 				EphemeralExpiration:       proto.Uint32(uint32(timer.Seconds())),
@@ -847,8 +893,9 @@ func (cli *Client) sendDM(
 	message *waE2E.Message,
 	timings *MessageDebugTimings,
 	extraParams nodeExtraParams,
-	notToMe bool, // 不要发给我自己的主设备
-	addFriend bool, // 是否添加好友
+	notToMe bool,
+	addFriend bool,
+	humanBehavior *HumanBehaviorConfig,
 ) (string, []byte, error) {
 	start := time.Now()
 	messagePlaintext, deviceSentMessagePlaintext, err := marshalMessage(to, message)
@@ -857,72 +904,31 @@ func (cli *Client) sendDM(
 		return "", nil, err
 	}
 
-	// 是否添加好友
 	if addFriend {
 		contact, err := cli.Store.Contacts.GetContact(ctx, to)
-		if err == nil {
-			if contact.FullName == "" {
-				// 不在好友列表
-				cli.Log.Debugf("准备添加联系人: %v", to)
-				err = cli.AddContact(to)
-				if err != nil {
-					cli.Log.Debugf("添加联系人失败: %v", err)
-				} else {
-					cli.Log.Debugf("添加联系人成功: %v", to)
+		if err == nil && contact.FullName == "" {
+			// 不在联系人列表里，先发送 app state patch 添加联系人。
+			cli.Log.Debugf("发送前准备添加联系人 %s", to)
+			err = cli.AddContact(to)
+			if err != nil {
+				cli.Log.Debugf("添加联系人 %s 失败: %v", to, err)
+			} else {
+				cli.Log.Debugf("添加联系人 %s 成功", to)
+			}
+			if humanBehavior != nil && humanBehavior.Enabled {
+				if err = cli.sleepHumanDelay(ctx, "添加联系人后", humanBehavior.AddContactDelayMin, humanBehavior.AddContactDelayMax); err != nil {
+					return "", nil, err
 				}
-
-				randomSleep(60000, 180000)
 			}
 		}
 	}
 
-	// 在这里模拟真人行为协议包？
-
-	// 1、发送自己在线状态
-	cli.Log.Debugf("发送自己在线状态")
-	// <presence type="available" name="Tank" />
-	_ = cli.SendPresence(ctx, types.PresenceAvailable)
-
-	// 2-3分钟后离线
-	go func(c *Client) {
-		waitSeconds := 120 + rand.Intn(60)
-		time.Sleep(time.Duration(waitSeconds) * time.Second)
-		if c != nil && c.IsConnected() {
-			cli.Log.Debugf("发送自己离线状态")
-			_ = c.SendPresence(ctx, types.PresenceUnavailable)
+	if humanBehavior != nil && humanBehavior.Enabled {
+		// 模拟真人发送前行为：在线、订阅 presence、输入中、暂停输入和发送前随机延迟。
+		if err = cli.runPreSendHumanBehavior(ctx, to, humanBehavior); err != nil {
+			return "", nil, err
 		}
-	}(cli)
-
-	// 2、发送订阅请求
-	cli.Log.Debugf("发送订阅请求")
-	// <presence type="subscribe" to="639757430046@s.whatsapp.net"><tctoken>0401173767940d8cc2be16</tctoken></presence>
-	_ = cli.SubscribePresence(ctx, to)
-
-	// 3、开始输入
-	cli.Log.Debugf("开始输入")
-	// <chatstate to="639757430046@s.whatsapp.net"><composing /></chatstate>
-	_ = cli.SendChatPresence(
-		ctx,
-		to,
-		types.ChatPresenceComposing,
-		types.ChatPresenceMediaText,
-	)
-
-	// 延迟1 - 2 秒
-	randomSleep(2000, 3000)
-
-	// 5、输入结束
-	cli.Log.Debugf("输入结束")
-	// <chatstate to="639757430046@s.whatsapp.net"><paused /></chatstate>
-	_ = cli.SendChatPresence(
-		ctx,
-		to,
-		types.ChatPresencePaused,
-		types.ChatPresenceMediaText,
-	)
-
-	// 发送消息前随机抖动
-	randomSleep(60000, 180000)
+	}
 
 	participants := []types.JID{to, ownID.ToNonAD()}
 	if notToMe {
@@ -944,7 +950,7 @@ func (cli *Client) sendDM(
 
 	tcTokenBytes, tcErr := cli.ensureTCToken(ctx, to)
 	if tcErr != nil {
-		cli.Log.Warnf("Failed to get privacy token for %s: %v", to, tcErr)
+		cli.Log.Warnf("获取 %s 的隐私 token 失败: %v", to, tcErr)
 	}
 	if len(tcTokenBytes) > 0 {
 		node.Content = append(node.GetChildren(), waBinary.Node{
@@ -972,7 +978,6 @@ func (cli *Client) sendDM(
 
 	return phash, data, nil
 }
-
 func getTypeFromMessage(msg *waE2E.Message) string {
 	switch {
 	case msg.ViewOnceMessage != nil:
@@ -1264,8 +1269,7 @@ func (cli *Client) prepareMessageNode(
 	}
 
 	if to.Server == types.HiddenUserServer {
-		// 如果to是lid，则添加peer_recipient_pn属性
-		// <message id="3EB018F88CA7D4EB523A70" to="229021178703950@lid" type="media" peer_recipient_pn="8618824585020@s.whatsapp.net">
+		// 如果 to 是 LID，并且能找到 PN 映射，就补充 peer_recipient_pn 属性。
 		attrs["peer_recipient_pn"], _ = cli.Store.GetAltJID(ctx, to)
 	}
 

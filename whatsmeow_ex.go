@@ -55,16 +55,7 @@ func (cli *Client) SendIQGetCountryCode() (*waBinary.Node, error) {
 	return respCh, err
 }
 
-/*
-设置用户头像	192 * 192规格
-<iq to="s.whatsapp.net" type="set" xmlns="w:profile:picture" id="25948.489-21189">
-
-	<picture type="image">
-	   ffd8ffe000104a46494600......
-	</picture>
-
-</iq>
-*/
+// SetPicture 设置用户头像，图片建议使用 192x192 规格。
 func (cli *Client) SetPicture(ctx context.Context, picture []byte) error {
 	if cli == nil {
 		return ErrClientIsNil
@@ -87,30 +78,24 @@ func (cli *Client) SetPicture(ctx context.Context, picture []byte) error {
 	return nil
 }
 
-/*
-添加为联系人
-*/
+// AddContact 添加指定 JID 为联系人。
 func (cli *Client) AddContact(jid types.JID) error {
-	// 添加联系人
 	ctx := context.Background()
 
 	mutations := make([]appstate.MutationInfo, 0, 1)
 
-	// 判断获取lid
+	// 先从本地映射里获取 LID；没有的话再请求用户信息填充缓存。
 	lid, _ := cli.Store.LIDs.GetLIDForPN(ctx, jid)
 	if lid.User == "" {
-		// 需要获取信息
 		info, _ := cli.GetUserInfo(ctx, []types.JID{jid})
 		if info != nil {
 			lid, _ = cli.Store.LIDs.GetLIDForPN(ctx, jid)
 		}
-		// 最好还是随机延迟一下
-		randomMilliseconds(1000, 2000)
 	}
 
 	mutation := appstate.MutationInfo{
-		// 加上这个"1" 不会同步到挂机账号的手机上
-		//Index: []string{appstate.IndexContact, jid.String(), "1"},
+		// 这里不加额外的 "1"，否则不会同步到主设备通讯录。
+		// Index: []string{appstate.IndexContact, jid.String(), "1"},
 		Index: []string{appstate.IndexContact, jid.String()},
 		Value: &waSyncAction.SyncActionValue{
 			Timestamp: proto.Int64(time.Now().UnixMilli()),
@@ -134,7 +119,7 @@ func (cli *Client) AddContact(jid types.JID) error {
 		Mutations: mutations,
 	}
 
-	// 发送 patch 到服务器
+	// 发送 patch 到服务器。
 	err := cli.SendAppState(ctx, patch)
 
 	return err
