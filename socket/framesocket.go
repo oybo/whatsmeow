@@ -9,6 +9,7 @@ package socket
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -43,6 +44,8 @@ type FrameSocket struct {
 	receivedLength int
 	incoming       []byte
 	partialHeader  []byte
+
+	logOutgoingFrameData atomic.Bool
 }
 
 func NewFrameSocket(log waLog.Logger, client *http.Client, routingInfo string) *FrameSocket {
@@ -119,6 +122,21 @@ func (fs *FrameSocket) Context() context.Context {
 	return fs.cancelCtx
 }
 
+// SetLogOutgoingFrameData 设置是否打印发送出去的 websocket frame 原始数据。
+//
+// 默认关闭。开启后会通过 socket logger 的 Debugf 输出 hex dump，请只在排查协议问题时临时开启。
+func (fs *FrameSocket) SetLogOutgoingFrameData(enabled bool) {
+	if fs != nil {
+		fs.logOutgoingFrameData.Store(enabled)
+	}
+}
+
+func (fs *FrameSocket) logOutgoingFrame(label string, data []byte) {
+	if fs.logOutgoingFrameData.Load() {
+		fs.log.Debugf("\n========== %s (%d bytes) ==========\n%s", label, len(data), hex.Dump(data))
+	}
+}
+
 func (fs *FrameSocket) SendFrame(data []byte) error {
 	conn := fs.conn.Load()
 	if conn == nil {
@@ -148,12 +166,7 @@ func (fs *FrameSocket) SendFrame(data []byte) error {
 	// Copy actual frame data
 	copy(wholeFrame[headerLength+FrameLengthSize:], data)
 
-	//// 打印传输data
-	//fmt.Printf(
-	//	"\n========== SEND FRAME (%d bytes) ==========\n%s\n",
-	//	len(wholeFrame),
-	//	hex.Dump(wholeFrame),
-	//)
+	fs.logOutgoingFrame("SEND FRAME", wholeFrame)
 
 	return conn.Write(fs.cancelCtx, websocket.MessageBinary, wholeFrame)
 }
@@ -164,12 +177,7 @@ func (fs *FrameSocket) SendFrameOrigin(data []byte) error {
 		return ErrSocketClosed
 	}
 
-	//// 打印传输data
-	//fmt.Printf(
-	//	"\n========== SEND FRAME (%d bytes) ==========\n%s\n",
-	//	len(data),
-	//	hex.Dump(data),
-	//)
+	fs.logOutgoingFrame("SEND FRAME ORIGIN", data)
 
 	return conn.Write(fs.cancelCtx, websocket.MessageBinary, data)
 }

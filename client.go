@@ -201,6 +201,10 @@ type Client struct {
 	websocketHTTP *http.Client
 	preLoginHTTP  *http.Client
 	WebsocketURL  string
+	// LogOutgoingFrameData 控制是否打印发送出去的 websocket frame 原始数据。
+	//
+	// 默认关闭。开启后会通过 Socket 子 logger 的 Debug 级别输出 hex dump，请只在排查协议问题时临时开启。
+	LogOutgoingFrameData bool
 
 	// This field changes the client to act like a Messenger client instead of a WhatsApp one.
 	//
@@ -532,6 +536,7 @@ func (cli *Client) connect(ctx context.Context) error {
 
 func (cli *Client) newFrameSocket(client *http.Client, routing_info string) *socket.FrameSocket {
 	fs := socket.NewFrameSocket(cli.Log.Sub("Socket"), client, routing_info)
+	fs.SetLogOutgoingFrameData(cli.LogOutgoingFrameData)
 	if cli.MessengerConfig != nil {
 		fs.URL = cli.MessengerConfig.WebsocketURL
 		fs.HTTPHeaders.Set("Origin", cli.MessengerConfig.BaseURL)
@@ -543,6 +548,22 @@ func (cli *Client) newFrameSocket(client *http.Client, routing_info string) *soc
 		//fs.HTTPHeaders.Set("Sec-Fetch-Site", "cross-site")
 	}
 	return fs
+}
+
+// SetLogOutgoingFrameData 设置是否打印发送出去的 websocket frame 原始数据。
+//
+// 这个方法会同时影响后续新连接和当前已经建立的连接。默认关闭，建议只在排查协议问题时临时开启。
+func (cli *Client) SetLogOutgoingFrameData(enabled bool) {
+	if cli == nil {
+		return
+	}
+	cli.LogOutgoingFrameData = enabled
+	cli.socketLock.RLock()
+	sock := cli.socket
+	cli.socketLock.RUnlock()
+	if sock != nil {
+		sock.SetLogOutgoingFrameData(enabled)
+	}
 }
 
 func (cli *Client) unlockedConnect(ctx context.Context) error {
