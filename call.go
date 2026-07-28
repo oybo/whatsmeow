@@ -115,7 +115,7 @@ func (cli *Client) RejectCall(ctx context.Context, callFrom types.JID, callID st
 		Content: nil,
 	}
 	if token, err := cli.ensureTCToken(ctx, callFrom); err != nil {
-		cli.Log.Warnf("Failed to get privacy token for call reject to %s: %v", callFrom, err)
+		cli.Log.Warnf("获取 %s 的通话拒绝隐私 token 失败: %v", callFrom, err)
 	} else if len(token) > 0 {
 		rejectNode.Content = []waBinary.Node{{
 			Tag:     "tctoken",

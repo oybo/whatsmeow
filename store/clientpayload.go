@@ -78,7 +78,7 @@ func (vc WAVersionContainer) ProtoAppVersion() *waWa6.ClientPayload_UserAgent_Ap
 }
 
 // waVersion is the WhatsApp web client version
-var waVersion = WAVersionContainer{2, 3000, 1040098269}
+var waVersion = WAVersionContainer{2, 3000, 1043636855}
 
 // waVersionHash is the md5 hash of a dot-separated waVersion
 var waVersionHash = waVersion.Hash()
@@ -166,15 +166,30 @@ var DeviceProps = &waCompanionReg.DeviceProps{
 		// 是否支持同步 FBID Bot 聊天记录
 		// 12
 		SupportFbidBotChatHistory: proto.Bool(true), // 0
+		// 是否支持 Add-on History Sync Migration
+		// 13
+		SupportAddOnHistorySyncMigration: nil,
 		// 是否支持 Message Association 元数据同步
 		// 14
 		SupportMessageAssociation: proto.Bool(true),
 		// 是否支持同步 群组历史消息
 		// 15
 		SupportGroupHistory: proto.Bool(false),
+		// 是否支持按需同步
+		// 16
+		OnDemandReady: nil,
+		// 是否支持访客聊天
+		// 17
+		SupportGuestChat: nil,
+		// 是否支持完整按需同步
+		// 18
+		CompleteOnDemandReady: nil,
 		// 缩略图同步天数限制
 		// 19
 		ThumbnailSyncDaysLimit: proto.Uint32(60),
+		// 首次同步每个会话最大消息数
+		// 20
+		InitialSyncMaxMessagesPerChat: nil,
 		// 21
 		SupportManusHistory: proto.Bool(true),
 		// 22
@@ -309,6 +324,9 @@ func (device *Device) getLoginPayload() *waWa6.ClientPayload {
 	}
 	fmt.Printf("getLoginPayload payload hex: %s\n", hex.EncodeToString(data))
 
+	if payload.Lc == nil {
+		payload.Lc = proto.Int32(1)
+	}
 	return payload
 }
 
