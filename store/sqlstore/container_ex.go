@@ -13,7 +13,7 @@ const getPhoneDeviceQuery = `
 SELECT jid, lid, registration_id, noise_key, identity_key,
        signed_pre_key, signed_pre_key_id, signed_pre_key_sig,
        adv_key, adv_details, adv_account_sig, adv_account_sig_key, adv_device_sig,
-       platform, business_name, push_name, facebook_uuid, lid_migration_ts
+       platform, business_name, push_name, facebook_uuid, lid_migration_ts, companion_meta_nonce
 FROM whatsmeow_device
 WHERE jid LIKE $1
 LIMIT 1
