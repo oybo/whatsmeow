@@ -54,9 +54,13 @@ func NewFrameSocket(log waLog.Logger, client *http.Client, routingInfo string) *
 		Header: WAConnHeader,
 		Frames: make(chan []byte),
 
-		URL:         URL + routingInfo,
-		HTTPHeaders: http.Header{"Origin": {Origin}},
-		HTTPClient:  client,
+		URL: URL + routingInfo,
+		HTTPHeaders: http.Header{
+			"Origin":        {Origin},
+			"Cache-Control": {"no-cache"},
+			"Pragma":        {"no-cache"},
+		},
+		HTTPClient: client,
 	}
 }
 

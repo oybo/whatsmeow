@@ -235,6 +235,7 @@ type Device struct {
 	PushName     string
 
 	LIDMigrationTimestamp int64
+	CompanionMetaNonce    string
 
 	RoutingInfo      string    // 新增：保存routingInfo
 	ServerStaticKey  [32]byte  // 新增：保存解密后的服务端公钥
