@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+
 	//_ "github.com/mattn/go-sqlite3" // 使用官方 SQLite 驱动，支持 CGO
 	// 替换为纯 Go 的驱动
 	_ "github.com/glebarez/go-sqlite"
@@ -48,14 +50,27 @@ func main() {
 	http.HandleFunc("/addContact", addContactHandler)
 	http.HandleFunc("/getAllContact", getAllContactHandler)
 	http.HandleFunc("/setNickNameAndPicture", setNickNameAndPicture)
+	//// 创建群组
+	//http.HandleFunc("/group-create", HandleGroupCreate)
 
-	fmt.Println("🚀 HTTP API 服务启动，监听 :9090")
-	go http.ListenAndServe(":9090", nil)
+	fmt.Println("🚀 HTTP API 服务启动，监听 :9120")
+	go http.ListenAndServe(":9120", nil)
+
+	checkCacheDir()
 
 	// 阻塞直到 Ctrl+C
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	<-c
+}
+
+func checkCacheDir() {
+	subDirs := []string{"db", "image"}
+	for _, subDir := range subDirs {
+		fullPath := filepath.Join(globalCacheDir, subDir)
+		// os.MkdirAll 会自动检查目录是否存在，不存在则创建
+		os.MkdirAll(fullPath, 0755)
+	}
 }
 
 // 请求配对码登录

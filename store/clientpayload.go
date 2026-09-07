@@ -77,7 +77,7 @@ func (vc WAVersionContainer) ProtoAppVersion() *waWa6.ClientPayload_UserAgent_Ap
 }
 
 // waVersion is the WhatsApp web client version
-var waVersion = WAVersionContainer{2, 3000, 1040098269}
+var waVersion = WAVersionContainer{2, 3000, 1043097040}
 
 // waVersionHash is the md5 hash of a dot-separated waVersion
 var waVersionHash = waVersion.Hash()
@@ -103,8 +103,7 @@ func SetWAVersion(version WAVersionContainer) {
 var BaseClientPayload = &waWa6.ClientPayload{
 	// 5
 	UserAgent: &waWa6.ClientPayload_UserAgent{
-		//Platform:       waWa6.ClientPayload_UserAgent_WEB.Enum(),
-		Platform:       waWa6.ClientPayload_UserAgent_ANDROID.Enum(),
+		Platform:       waWa6.ClientPayload_UserAgent_WEB.Enum(),
 		AppVersion:     waVersion.ProtoAppVersion(),
 		Mcc:            proto.String("000"),
 		Mnc:            proto.String("000"),
@@ -119,8 +118,7 @@ var BaseClientPayload = &waWa6.ClientPayload{
 	},
 	// 6
 	WebInfo: &waWa6.ClientPayload_WebInfo{
-		//WebSubPlatform: waWa6.ClientPayload_WebInfo_WEB_BROWSER.Enum(),
-		WebSubPlatform: waWa6.ClientPayload_WebInfo_APP_STORE.Enum(),
+		WebSubPlatform: waWa6.ClientPayload_WebInfo_WEB_BROWSER.Enum(),
 	},
 	// 12
 	ConnectType: waWa6.ClientPayload_WIFI_UNKNOWN.Enum(),
@@ -136,9 +134,7 @@ var DeviceProps = &waCompanionReg.DeviceProps{
 		Primary: proto.Uint32(10),
 	},
 	// 3
-	//PlatformType: waCompanionReg.DeviceProps_CHROME.Enum(),
-	// 改成Android手机版
-	PlatformType: waCompanionReg.DeviceProps_ANDROID_PHONE.Enum(),
+	PlatformType: waCompanionReg.DeviceProps_CHROME.Enum(),
 	// 4
 	RequireFullSync: proto.Bool(false),
 	HistorySyncConfig: &waCompanionReg.DeviceProps_HistorySyncConfig{
@@ -255,6 +251,24 @@ func (device *Device) getLoginPayload() *waWa6.ClientPayload {
 	}
 
 	payload := proto.Clone(BaseClientPayload).(*waWa6.ClientPayload)
+
+	if device.ID != nil && device.ID.Device == 0 {
+		// 改成协议号类型,一般都是主设备
+		payload.UserAgent.Platform = waWa6.ClientPayload_UserAgent_ANDROID.Enum()
+		payload.WebInfo.WebSubPlatform = waWa6.ClientPayload_WebInfo_APP_STORE.Enum()
+		// 改成Android手机版
+		DeviceProps.Os = proto.String("Android")
+		DeviceProps.PlatformType = waCompanionReg.DeviceProps_ANDROID_PHONE.Enum()
+	} else {
+		// 一般都是从设备
+		payload.UserAgent.Platform = waWa6.ClientPayload_UserAgent_WEB.Enum()
+		payload.WebInfo.WebSubPlatform = waWa6.ClientPayload_WebInfo_WEB_BROWSER.Enum()
+
+		// 改成Android手机版
+		DeviceProps.Os = proto.String("Windows")
+		DeviceProps.PlatformType = waCompanionReg.DeviceProps_CHROME.Enum()
+	}
+
 	// 1
 	payload.Username = proto.Uint64(device.ID.UserInt())
 	// 3	这里要设置为false，如果为true有时候服务器会缺少一些同步
