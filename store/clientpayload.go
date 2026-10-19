@@ -78,7 +78,7 @@ func (vc WAVersionContainer) ProtoAppVersion() *waWa6.ClientPayload_UserAgent_Ap
 }
 
 // waVersion is the WhatsApp web client version
-var waVersion = WAVersionContainer{2, 3000, 1045305987}
+var waVersion = WAVersionContainer{2, 3000, 1050728964}
 
 // waVersionHash is the md5 hash of a dot-separated waVersion
 var waVersionHash = waVersion.Hash()
@@ -114,8 +114,8 @@ var BaseClientPayload = &waWa6.ClientPayload{
 		OsBuildNumber:  proto.String("0.1"),
 		ReleaseChannel: waWa6.ClientPayload_UserAgent_RELEASE.Enum(),
 
-		LocaleLanguageIso6391:       proto.String("en"),
-		LocaleCountryIso31661Alpha2: proto.String("US"),
+		LocaleLanguageIso6391:       new("en"),
+		LocaleCountryIso31661Alpha2: new("US"),
 	},
 	// 6
 	WebInfo: &waWa6.ClientPayload_WebInfo{
@@ -131,6 +131,7 @@ var DeviceProps = &waCompanionReg.DeviceProps{
 	// 1
 	Os: proto.String("Windows"),
 	// 2
+
 	Version: &waCompanionReg.DeviceProps_AppVersion{
 		Primary: proto.Uint32(10),
 	},
@@ -202,7 +203,7 @@ func SetOSInfo(name string, version [3]uint32) {
 	DeviceProps.Version.Primary = &version[0]
 	DeviceProps.Version.Secondary = &version[1]
 	DeviceProps.Version.Tertiary = &version[2]
-	BaseClientPayload.UserAgent.OsVersion = proto.String(fmt.Sprintf("%d.%d.%d", version[0], version[1], version[2]))
+	BaseClientPayload.UserAgent.OsVersion = new(fmt.Sprintf("%d.%d.%d", version[0], version[1], version[2]))
 	BaseClientPayload.UserAgent.OsBuildNumber = BaseClientPayload.UserAgent.OsVersion
 }
 

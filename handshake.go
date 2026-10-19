@@ -16,6 +16,7 @@ import (
 	"go.mau.fi/libsignal/ecc"
 	"google.golang.org/protobuf/proto"
 
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waCert"
 	"go.mau.fi/whatsmeow/proto/waWa6"
 	"go.mau.fi/whatsmeow/socket"
@@ -37,7 +38,7 @@ func (cli *Client) shouldUseIKHandshake() bool {
 	return isIKValid
 }
 
-func (cli *Client) doConnectHandshake(ctx context.Context, fs *socket.FrameSocket, ephemeralKP keys.KeyPair) error {
+func (cli *Client) doConnectHandshake(ctx context.Context, fs *socket.FrameSocket, ephemeralKP keys.KeyPair) (chan *waBinary.Node, error) {
 	// 判断有没有routingInfo的值，如果有值，建立socket连接后就发送这个ED
 	routing_info := cli.Store.RoutingInfo
 	if routing_info != "" {
@@ -50,15 +51,15 @@ func (cli *Client) doConnectHandshake(ctx context.Context, fs *socket.FrameSocke
 		cli.Log.Debugf("doIKHandshake")
 
 		// 传入本次连接随机生成的临时密钥对 ephemeralKP，本地静态密钥内部会自动读取
-		err := cli.doIKHandshake(ctx, fs, ephemeralKP, cli.Store.ServerStaticKey)
+		queue, err := cli.doIKHandshake(ctx, fs, ephemeralKP, cli.Store.ServerStaticKey)
 		if err == nil {
 			cli.Log.Debugf("IK 模式恢复连接成功")
-			return nil
+			return queue, nil
 		}
 
 		// 如果 IK 失败，直接返回错误，交由上层 unlockedConnect 触发网络重连和切换 XX 模式
 		cli.Log.Debugf("IK handshake failed: %v", err)
-		return fmt.Errorf("IK handshake failed: %w", err)
+		return nil, fmt.Errorf("IK handshake failed: %w", err)
 	}
 
 	cli.Log.Debugf("doXXHandshake")
@@ -66,7 +67,7 @@ func (cli *Client) doConnectHandshake(ctx context.Context, fs *socket.FrameSocke
 }
 
 // doHandshake implements the Noise_XX_25519_AESGCM_SHA256 handshake for the WhatsApp web API.
-func (cli *Client) doHandshake(ctx context.Context, fs *socket.FrameSocket, ephemeralKP keys.KeyPair) error {
+func (cli *Client) doHandshake(ctx context.Context, fs *socket.FrameSocket, ephemeralKP keys.KeyPair) (chan *waBinary.Node, error) {
 	return cli.doXXHandshake(ctx, fs, ephemeralKP)
 }
 
@@ -111,19 +112,20 @@ func (cli *Client) saveHandshakeKeys(ctx context.Context) error {
 	return nil
 }
 
-func (cli *Client) finishHandshake(ctx context.Context, nh *socket.NoiseHandshake, fs *socket.FrameSocket) error {
-	ns, err := nh.Finish(ctx, fs, cli.handleFrame, cli.onDisconnect)
+func (cli *Client) finishHandshake(ctx context.Context, nh *socket.NoiseHandshake, fs *socket.FrameSocket) (chan *waBinary.Node, error) {
+	queue := make(chan *waBinary.Node, handlerQueueSize)
+	ns, err := nh.Finish(fs, cli.makeFrameHandler(queue), cli.onDisconnect)
 	if err != nil {
-		return fmt.Errorf("failed to create noise socket: %w", err)
+		return nil, fmt.Errorf("failed to create noise socket: %w", err)
 	}
 
 	cli.socket = ns
-	return nil
+	return queue, nil
 }
 
 // doNoiseXXHandshake implements the Noise_XX_25519_AESGCM_SHA256 handshake for the WhatsApp web API.
 // XX 模式：开始时客户端不知道服务器的静态公钥，需要服务器在握手过程中（Server Hello）把自己的静态公钥加密传过来，客户端解密后再进行身份验证。
-func (cli *Client) doXXHandshake(ctx context.Context, fs *socket.FrameSocket, ephemeralKP keys.KeyPair) error {
+func (cli *Client) doXXHandshake(ctx context.Context, fs *socket.FrameSocket, ephemeralKP keys.KeyPair) (chan *waBinary.Node, error) {
 	// 初始化 Noise
 	nh := socket.NewNoiseHandshake()
 
@@ -140,15 +142,18 @@ func (cli *Client) doXXHandshake(ctx context.Context, fs *socket.FrameSocket, ep
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to marshal handshake message: %w", err)
+		return nil, fmt.Errorf("failed to marshal handshake message: %w", err)
 	}
 
 	// 执行发送
 	err = fs.SendFrame(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send handshake message: %w", err)
+	}
 
 	handshakeResponse, err := readHandshakeResponse(fs)
 	if err != nil {
-		return fmt.Errorf("failed to unmarshal handshake response: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal handshake response: %w", err)
 	}
 
 	// 服务器临时公钥
@@ -158,7 +163,7 @@ func (cli *Client) doXXHandshake(ctx context.Context, fs *socket.FrameSocket, ep
 	// 服务器证书（加密的）
 	certificateCiphertext := handshakeResponse.GetServerHello().GetPayload()
 	if len(serverEphemeral) != 32 || serverStaticCiphertext == nil || certificateCiphertext == nil {
-		return fmt.Errorf("missing parts of handshake response")
+		return nil, fmt.Errorf("missing parts of handshake response")
 	}
 	// 格式转换，转成go的字节数组
 	serverEphemeralArr := *(*[32]byte)(serverEphemeral)
@@ -168,29 +173,29 @@ func (cli *Client) doXXHandshake(ctx context.Context, fs *socket.FrameSocket, ep
 	// Noise核心：通过 DH 密钥交换算法，混合【本地生成的私钥】 + 【服务器公钥】
 	err = nh.MixSharedSecretIntoKey(*ephemeralKP.Priv, serverEphemeralArr)
 	if err != nil {
-		return fmt.Errorf("failed to mix server ephemeral key in: %w", err)
+		return nil, fmt.Errorf("failed to mix server ephemeral key in: %w", err)
 	}
 
 	// 用刚刚诞生的第一代密钥，解密服务器的静态公钥（真身）
 	staticDecrypted, err := nh.Decrypt(serverStaticCiphertext)
 	if err != nil {
-		return fmt.Errorf("failed to decrypt server static ciphertext: %w", err)
+		return nil, fmt.Errorf("failed to decrypt server static ciphertext: %w", err)
 	} else if len(staticDecrypted) != 32 {
-		return fmt.Errorf("unexpected length of server static plaintext %d (expected 32)", len(staticDecrypted))
+		return nil, fmt.Errorf("unexpected length of server static plaintext %d (expected 32)", len(staticDecrypted))
 	}
 
 	// 通过 DH 算法，混合【本地生成的私钥】 + 【服务器静态公钥】
 	err = nh.MixSharedSecretIntoKey(*ephemeralKP.Priv, *(*[32]byte)(staticDecrypted))
 	if err != nil {
-		return fmt.Errorf("failed to mix server static key in: %w", err)
+		return nil, fmt.Errorf("failed to mix server static key in: %w", err)
 	}
 
 	// 用第二代密钥解密服务器传过来的证书
 	certDecrypted, err := nh.Decrypt(certificateCiphertext)
 	if err != nil {
-		return fmt.Errorf("failed to decrypt noise certificate ciphertext: %w", err)
+		return nil, fmt.Errorf("failed to decrypt noise certificate ciphertext: %w", err)
 	} else if err = verifyServerCert(certDecrypted, staticDecrypted); err != nil { // 验证证书
-		return fmt.Errorf("failed to verify server cert: %w", err)
+		return nil, fmt.Errorf("failed to verify server cert: %w", err)
 	}
 
 	// 解析最外层的证书链 (CertChain) 和服务端静态公钥 进行存储
@@ -202,14 +207,14 @@ func (cli *Client) doXXHandshake(ctx context.Context, fs *socket.FrameSocket, ep
 	// 2. 核心：通过 DH 算法，混合【客户端静态私钥】 + 【服务器临时公钥】 -- 这个NoiseKey.Priv就是我们账号存储的私钥
 	err = nh.MixSharedSecretIntoKey(*cli.Store.NoiseKey.Priv, serverEphemeralArr)
 	if err != nil {
-		return fmt.Errorf("failed to mix noise private key in: %w", err)
+		return nil, fmt.Errorf("failed to mix noise private key in: %w", err)
 	}
 
 	// 3. 获取并打包客户端登录负载（包含设备操作系统、版本、登录 Token 等）
 	// 序列化
 	clientFinishPayloadBytes, err := cli.getClientPayloadBytes()
 	if err != nil {
-		return fmt.Errorf("failed to marshal client finish payload: %w", err)
+		return nil, fmt.Errorf("failed to marshal client finish payload: %w", err)
 	}
 
 	// 4. 用最新的密钥加密这个 Payload
@@ -223,13 +228,13 @@ func (cli *Client) doXXHandshake(ctx context.Context, fs *socket.FrameSocket, ep
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to marshal handshake finish message: %w", err)
+		return nil, fmt.Errorf("failed to marshal handshake finish message: %w", err)
 	}
 
 	// 执行发送
 	err = fs.SendFrame(data)
 	if err != nil {
-		return fmt.Errorf("failed to send handshake finish message: %w", err)
+		return nil, fmt.Errorf("failed to send handshake finish message: %w", err)
 	}
 
 	// 握手结束
@@ -284,7 +289,7 @@ func (cli *Client) handleAndSaveServerCert(ctx context.Context, certDecrypted []
 // doNoiseIKHandshake implements the Noise_IK_25519_AESGCM_SHA256 handshake for the WhatsApp web API.
 // IK 模式：客户端在发起握手前，已经提前知道了服务器的静态公钥（通常是硬编码在客户端，或者上一次连接时缓存下来的）。因此，客户端在第一步（Client Hello）就可以直接利用服务器的静态公钥加密数据并进行密钥交换（DH）。
 // 注意：IK 模式要求必须传入服务器的静态公钥 serverStaticPub
-func (cli *Client) doIKHandshake(ctx context.Context, fs *socket.FrameSocket, ephemeralKP keys.KeyPair, serverStaticKey [32]byte) error {
+func (cli *Client) doIKHandshake(ctx context.Context, fs *socket.FrameSocket, ephemeralKP keys.KeyPair, serverStaticKey [32]byte) (chan *waBinary.Node, error) {
 	// 初始化 Noise
 	nh := socket.NewNoiseHandshake()
 	nh.Start(socket.NoiseIKStartPattern, fs.Header)
@@ -298,7 +303,7 @@ func (cli *Client) doIKHandshake(ctx context.Context, fs *socket.FrameSocket, ep
 	// 【EC Agreement 1】混合：客户端临时私钥 + 服务器静态公钥
 	err := nh.MixSharedSecretIntoKey(*ephemeralKP.Priv, serverStaticKey)
 	if err != nil {
-		return fmt.Errorf("failed to mix server static key in: %w", err)
+		return nil, fmt.Errorf("failed to mix server static key in: %w", err)
 	}
 
 	// 在混入 s,s 之前，先加密客户端静态公钥
@@ -307,12 +312,12 @@ func (cli *Client) doIKHandshake(ctx context.Context, fs *socket.FrameSocket, ep
 	// 混合：客户端静态私钥 + 服务器静态公钥
 	err = nh.MixSharedSecretIntoKey(*cli.Store.NoiseKey.Priv, serverStaticKey)
 	if err != nil {
-		return fmt.Errorf("failed to mix noise private key with server static key: %w", err)
+		return nil, fmt.Errorf("failed to mix noise private key with server static key: %w", err)
 	}
 
 	clientPayloadBytes, err := cli.getClientPayloadBytes()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// 用混合了 s,s 后的最新密钥，加密登录负载
@@ -327,20 +332,20 @@ func (cli *Client) doIKHandshake(ctx context.Context, fs *socket.FrameSocket, ep
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to marshal handshake message: %w", err)
+		return nil, fmt.Errorf("failed to marshal handshake message: %w", err)
 	}
 	err = fs.SendFrame(data)
 	if err != nil {
-		return fmt.Errorf("failed to send handshake message: %w", err)
+		return nil, fmt.Errorf("failed to send handshake message: %w", err)
 	}
 
 	handshakeResponse, err := readHandshakeResponse(fs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	serverEphemeral := handshakeResponse.GetServerHello().GetEphemeral()
 	if len(serverEphemeral) != 32 {
-		return fmt.Errorf("missing server ephemeral key in handshake response")
+		return nil, fmt.Errorf("missing server ephemeral key in handshake response")
 	}
 	serverEphemeralArr := *(*[32]byte)(serverEphemeral)
 
@@ -350,13 +355,13 @@ func (cli *Client) doIKHandshake(ctx context.Context, fs *socket.FrameSocket, ep
 	// 混合服务器临时公钥 + 客户端临时私钥 (e, e)
 	err = nh.MixSharedSecretIntoKey(*ephemeralKP.Priv, serverEphemeralArr)
 	if err != nil {
-		return fmt.Errorf("failed to mix server ephemeral key in: %w", err)
+		return nil, fmt.Errorf("failed to mix server ephemeral key in: %w", err)
 	}
 
 	// 混合服务器临时公钥 + 客户端静态私钥 (s, e)
 	err = nh.MixSharedSecretIntoKey(*cli.Store.NoiseKey.Priv, serverEphemeralArr)
 	if err != nil {
-		return fmt.Errorf("failed to mix noise private key with server ephemeral key: %w", err)
+		return nil, fmt.Errorf("failed to mix noise private key with server ephemeral key: %w", err)
 	}
 
 	serverPayloadCiphertext := handshakeResponse.GetServerHello().GetPayload()
@@ -364,8 +369,8 @@ func (cli *Client) doIKHandshake(ctx context.Context, fs *socket.FrameSocket, ep
 		// 校验证书密钥
 		_, err = nh.Decrypt(serverPayloadCiphertext)
 		if err != nil {
-			cli.Log.Errorf("failed to decrypt server hello payload ciphertext: %w", err)
-			return err
+			cli.Log.Errorf("failed to decrypt server hello payload ciphertext: %v", err)
+			return nil, err
 		}
 	}
 

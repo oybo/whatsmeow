@@ -1,4 +1,5 @@
--- v0 -> v19 (compatible with v8+): Latest schema
+-- v0 -> v20 (compatible with v8+): Latest schema
+
 CREATE TABLE whatsmeow_device (
 	jid TEXT PRIMARY KEY,
 	lid TEXT,
@@ -123,6 +124,7 @@ CREATE TABLE whatsmeow_chat_settings (
 	muted_until   BIGINT  NOT NULL DEFAULT 0,
 	pinned        BOOLEAN NOT NULL DEFAULT false,
 	archived      BOOLEAN NOT NULL DEFAULT false,
+	wasa_root_secret_id TEXT NOT NULL DEFAULT '',
 
 	PRIMARY KEY (our_jid, chat_jid),
 	FOREIGN KEY (our_jid) REFERENCES whatsmeow_device(jid) ON DELETE CASCADE ON UPDATE CASCADE
